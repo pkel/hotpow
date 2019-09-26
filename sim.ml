@@ -54,6 +54,7 @@ include struct
     ; latency: float [@default 0.] [@aka ["l"]]
           (** Set the expected time delta between broadcast send and delivery
               relative to expected block time. *)
+    ; vote_latency: float option  (** Set a custom latency for votes. *)
     ; eclipse_time: float [@default 10.]
           (** Set how long (multiple of expected block time) nodes are eclipsed
               from the network. Messages sent by or delivered to eclipsed nodes
@@ -87,10 +88,14 @@ let check_params p =
   if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
   if p.alpha < 0. || p.alpha > 1. then fail "alpha" "must be in [0,1]" ;
   if p.latency < 0. then fail "latency" "must be >= 0" ;
-  if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
-  if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
-  if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
-    fail "leader-failure-rate" "must be in [0,1]"
+  match p.vote_latency with
+  | Some l when l < 0. -> fail "vote-latency" "must be >= 0"
+  | _ ->
+      () ;
+      if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
+      if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
+      if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
+        fail "leader-failure-rate" "must be in [0,1]"
 
 type result =
   { block_cnt: int
@@ -123,6 +128,11 @@ let cols : row column list =
   ; {title= "p.alpha"; f= (fun x -> f x.p.alpha)}
   ; {title= "p.lat_dist"; f= (fun x -> d x.p.lat_dist)}
   ; {title= "p.latency"; f= (fun x -> f x.p.latency)}
+  ; { title= "p.vote_latency"
+    ; f=
+        (fun x ->
+          f (match x.p.vote_latency with Some x -> x | None -> x.p.latency) )
+    }
   ; {title= "p.churn"; f= (fun x -> f x.p.churn)}
   ; {title= "p.eclipse_time"; f= (fun x -> f x.p.eclipse_time)}
   ; {title= "p.leader_failure_rate"; f= (fun x -> f x.p.leader_failure_rate)}
@@ -234,12 +244,13 @@ let handle_event ~p ~s =
       when src > 0 && Random.float 1. <= p.leader_failure_rate ->
         (* leader fails. *) ()
     | Broadcast {src; cnt; m} ->
+        let lat =
+          match (m, p.vote_latency) with Vote _, Some l -> l | _ -> p.latency
+        in
         Array.iteri
           (fun rcv _ ->
             if rcv <> src then
-              let delay =
-                if p.latency > 0. then draw p.lat_dist p.latency else 0.
-              in
+              let delay = if p.latency > 0. then draw p.lat_dist lat else 0. in
               Event.schedule ~delay (Net (Deliver {src; rcv; cnt; m})) )
           s.nodes
     | Deliver x ->
