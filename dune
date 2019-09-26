@@ -1,0 +1,13 @@
+(executable
+ (name sim)
+ (libraries cmdliner)
+ (preprocess
+  (pps ppx_deriving_cmdliner)))
+
+(rule
+ (targets hotpow_censor.ml hotpow_censor_simple.ml hotpow_selfish.ml)
+ (action
+  (run ./patch.sh))
+ (deps hotpow.ml patch.sh hotpow_censor.patch hotpow_censor_simple.patch
+   hotpow_selfish.patch)
+ (mode fallback))

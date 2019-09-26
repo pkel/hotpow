@@ -1,0 +1,79 @@
+The simulation framework used for evaluating the HotPoW protocol proposal.
+
+Reproducing the results
+-----------------------
+
+We attempt to make reproduction as simple as possible by providing a Dockerfile
+for building a statically linked executable from the simulation code. This
+encapsulates the OCaml build environment and makes the container runtime the
+only non-standard dependency.
+
+We use podman [0] as container runtime, and GNU parallel [1] for running the
+simulation in parallel on multiple devices. We use bash and make to glue
+everything together. On a system with these dependencies installed, you should
+be able to run
+
+./sim.sh
+
+and thereby reproduce the results presented in the evaluation section of our
+paper submission.
+
+Podman is a drop in replacement for docker. Our glue code contains logic for
+falling back to docker, but unfortunately we were not able to test this
+fallback in time for the submission.
+
+
+Own parameters
+--------------
+
+If the compilation of the static executable within the container succeeded, you
+will find the simulation program in the _build folder. You can best explore its
+capabilities by running
+
+_build/static/sim.exe --help
+
+
+Going deeper
+------------
+
+You will need OCaml, the OCaml package manager opam and the OCaml build tool
+dune [2]. If these tools are available,
+
+make sim
+
+will point you towards missing dependencies, build the simulation, and run it
+with default parameters. At this stage, modifying the protocol should be
+feasible.
+
+We recommend reading the code in the following order:
+
+hotpow.ml
+  The HotPoW protocol
+
+common.ml
+  Shared code that might also be used by the attacker
+
+sim.ml
+  Simulation as compiled to sim.exe
+
+
+Attacker
+--------
+
+The attacker strategies are stored as patches relative to hotpow.ml. You can
+generate the attacker implementations by executing
+
+./patch.sh
+
+. Afterwards you can modify the attack strategies. The build process considers
+changes made to the generated hotpow_*.ml files. The patch files can be updated
+using
+
+./patch.sh update
+
+. Happy Hacking!
+
+
+[0]: https://podman.io/
+[1]: https://www.gnu.org/software/parallel/
+[2]: https://dune.build/
