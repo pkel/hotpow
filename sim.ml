@@ -1,60 +1,21 @@
 let () = Random.self_init ()
 
+open Simlib
 open Common
 
-type distribution = Exponential | Uniform
-
-let string_of_distribution = function
-  | Exponential -> "exponential"
-  | Uniform -> "uniform"
-
-let distribution_enum =
-  List.map (fun d -> (string_of_distribution d, d)) [Exponential; Uniform]
-
-let draw d p =
-  match d with
-  | Uniform -> p *. Random.float 2.
-  | Exponential -> -1. *. p *. log (Random.float 1.)
-
-type strategy = Naive | Censor | Censor_simple | Selfish
-
-let string_of_strategy = function
-  | Naive -> "naive"
-  | Censor -> "censor"
-  | Censor_simple -> "censor-simple"
-  | Selfish -> "selfish"
-
-let implementation_of_strategy : strategy -> (module Implementation) = function
-  | Naive -> (module Hotpow)
-  | Censor -> (module Hotpow_censor)
-  | Censor_simple -> (module Hotpow_censor_simple)
-  | Selfish -> (module Hotpow_selfish)
-
-let strategy_enum =
-  List.map
-    (fun s -> (string_of_strategy s, s))
-    [Naive; Censor; Censor_simple; Selfish]
-
-include struct
+module Params = struct
   [@@@ocaml.warning "-39"]
 
-  type params =
-    { n_blocks: int [@default 1024] [@aka ["b"]]
+  type t =
+    { n_blocks: int [@default 128] [@aka ["b"]]
           (** Set amount of blocks to simulate. *)
     ; quorum_size: int [@default 8] [@aka ["q"]]  (** Set the quorum size. *)
-    ; n_nodes: int [@default 16] [@aka ["n"]]
-          (** Set number of nodes in network. *)
-    ; alpha: float [@default 1. /. 3.] [@aka ["a"]]
-          (** Set adversaries relative compute power. *)
-    ; strategy: strategy [@default Censor] [@aka ["s"]] [@enum strategy_enum]
-          (** Set the attacker's strategy. *)
-    ; lat_dist: distribution
-          [@default Exponential] [@aka ["d"]] [@enum distribution_enum]
-          (** Set the distribution of latencies. *)
-    ; latency: float [@default 0.] [@aka ["l"]]
-          (** Set the expected time delta between broadcast send and delivery
-              relative to expected block time. *)
-    ; vote_latency: float option  (** Set a custom latency for votes. *)
+    ; topology: string [@aka ["t"]] [@default "-"]
+          (** Specify topology (input) GraphML file.
+              Use --topology '-' to read topology from STDIN. *)
+    ; result: string [@aka ["r"]] [@default "-"]
+          (** Specify result (outout) GraphML file.
+              Use --result '-' to write result to STDOUT. *)
     ; eclipse_time: float [@default 10.]
           (** Set how long (multiple of expected block time) nodes are eclipsed
               from the network. Messages sent by or delivered to eclipsed nodes
@@ -67,45 +28,188 @@ include struct
     ; leader_failure_rate: float [@default 0.] [@aka ["f"]]
           (** Set the probability of a truthful leader failing to propose a
               block. We model leader failure by suppressing block proposals. *)
-    ; header: bool  (** Print csv headers and exit. *)
-    ; progress: bool [@aka ["p"]]
-          (** Print intermediate results to STDERR. Constructing the
-              intermediate results creates a significant overhead. *)
     ; verbosity: int [@aka ["v"]] [@default 0]
           (** Print events. > 0 : Message send; > 1 : ATV assignments;
               > 2 : Message delivery *)
-    }
+    ; format: bool [@default false]  (** Break and indent XML output. *) }
   [@@deriving cmdliner]
+
+  let check p =
+    let fail p msg =
+      Printf.eprintf "Invalid parameter --%s: %s\n%!" p msg ;
+      exit 1
+    in
+    if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
+    if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
+    if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
+    if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
+    if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
+      fail "leader-failure-rate" "must be in [0,1]"
 end
 
-let check_params p =
-  let fail p msg =
-    Printf.eprintf "Invalid parameter --%s: %s\n%!" p msg ;
-    exit 1
-  in
-  if p.n_nodes < 2 then fail "n-blocks" "must be >= 2" ;
-  if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
-  if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
-  if p.alpha < 0. || p.alpha > 1. then fail "alpha" "must be in [0,1]" ;
-  if p.latency < 0. then fail "latency" "must be >= 0" ;
-  match p.vote_latency with
-  | Some l when l < 0. -> fail "vote-latency" "must be >= 0"
-  | _ ->
-      () ;
-      if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
-      if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
-      if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
-        fail "leader-failure-rate" "must be in [0,1]"
+module Network = struct
+  (** {1} Simulated Network
+
+      Simulated network based on annotated {!Graph}.
+  *)
+  type address = int
+
+  type msg = {src: address; rcv: address; m: message}
+
+  type event =
+    | Send of msg
+    | Deliver of msg
+    | Broadcast of {src: address; m: message}
+
+  type eclipse = {till: float; queue: event Queue.t}
+
+  type node_data =
+    { alpha: float
+    ; strategy: Strategy.t
+    ; instance: (module Node)
+    ; mutable eclipse: eclipse option
+    ; mutable atv_count: int }
+
+  type edge_data =
+    { latency: float Rvar.t
+    ; bandwidth: float Rvar.t
+    ; mutable messages_transferred: int
+    ; mutable blocks_transferred: int
+    ; mutable votes_transferred: int }
+
+  type t = (node_data, edge_data) Graph.t
+  type node = node_data Graph.node
+  type edge = (node_data, edge_data) Graph.edge
+
+  let count_msg data msg =
+    data.messages_transferred <- data.messages_transferred + 1 ;
+    match msg with
+    | Block _ -> data.blocks_transferred <- data.blocks_transferred + 1
+    | Vote _ -> data.votes_transferred <- data.votes_transferred + 1
+
+  let to_graphml =
+    let open Graphml in
+    let int i = Double (float_of_int i) in
+    let rvar x = String (Rvar.float_to_string x) in
+    let strategy x = String (Strategy.to_string x) in
+    let e data =
+      [ ("latency", rvar data.latency)
+      ; ("bandwidth", rvar data.bandwidth)
+      ; ("messages_transferred", int data.messages_transferred)
+      ; ("blocks_transferred", int data.blocks_transferred)
+      ; ("votes_transferred", int data.votes_transferred) ]
+    and n data =
+      [ ("alpha", Double data.alpha)
+      ; ("strategy", strategy data.strategy)
+      ; ("atv_count", int data.atv_count) ]
+    in
+    Graph.to_graphml ~n ~e
+
+  let of_graphml
+      ~(spawn : addr:address -> (module Implementation) -> (module Node)) =
+    let open Graphml in
+    let strf = Printf.sprintf in
+    let float ~default key data =
+      match get_double key data with
+      | Ok d -> d
+      | Error `Key_not_found -> default
+      | Error `Type_mismatch ->
+          failwith (strf "unexpected data type for field \"%s\"" key)
+    and string ~default key data =
+      match get_string key data with
+      | Ok d -> d
+      | Error `Key_not_found -> default
+      | Error `Type_mismatch ->
+          failwith (strf "unexpected data type for field \"%s\"" key)
+    and int ~default key data =
+      match get_double key data with
+      | Ok d -> Float.to_int d
+      | Error `Key_not_found -> default
+      | Error `Type_mismatch ->
+          failwith (strf "unexpected data type for field \"%s\"" key)
+    and rvar ~default key data =
+      match List.assoc_opt key data with
+      | Some (String s) -> Rvar.(float_of_string s |> fail)
+      | Some (Double d) -> Rvar.constant d
+      | None -> Rvar.constant default
+      | _ -> failwith (strf "unexpected data type for field \"%s\"" key)
+    in
+    let n ~id data =
+      let strategy =
+        string ~default:"naive" "strategy" data |> Strategy.of_string
+      in
+      { strategy
+      ; instance= Strategy.to_implementation strategy |> spawn ~addr:id
+      ; alpha= float ~default:1. "alpha" data
+      ; eclipse= None
+      ; atv_count= int ~default:0 "atv_count" data }
+    and e data =
+      { latency= rvar ~default:0. "latency" data
+      ; bandwidth= rvar ~default:0. "bandwidth" data
+      ; messages_transferred= int ~default:0 "messages_transferred" data
+      ; blocks_transferred= int ~default:0 "blocks_transferred" data
+      ; votes_transferred= int ~default:0 "votes_transferred" data }
+    in
+    Graph.of_graphml ~n ~e
+end
+
+module Event = struct
+  type t =
+    | ATV of {nth: int; node: Network.node}
+    | Net of Network.event
+    | Shutdown
+
+  let to_string =
+    let sprintf = Printf.sprintf in
+    let open Graph in
+    function
+    | Net (Broadcast b) ->
+        sprintf "n%i broadcasts %s" b.src (message_to_string b.m)
+    | Net (Send m) ->
+        sprintf "n%i sends %s to n%i" m.src (message_to_string m.m) m.rcv
+    | Net (Deliver m) ->
+        sprintf "n%i receives %s from n%i" m.rcv (message_to_string m.m) m.src
+    | ATV {nth; node} -> sprintf "assign %ith ATV to n%i" nth node.id
+    | Shutdown -> sprintf "stop simulation"
+
+  module Queue = struct
+    type event = t
+
+    open Event_queue
+
+    let eq : event t ref = ref empty
+    let time = ref 0.
+
+    let schedule ?(delay = 0.) event =
+      eq := schedule !eq (!time +. delay) event
+
+    let next () =
+      let time', event, eq' = next !eq in
+      time := time' ;
+      eq := eq' ;
+      (time', event)
+
+    let is_empty () = !eq = empty
+  end
+end
+
+type simulation =
+  { (* (mutable) state of a simulation *)
+    mutable height: int
+  ; mutable shutdown: bool
+  ; net: Network.t
+  ; nodes: Network.node array
+  ; mutable atv_count: int
+  ; atv_rate: float
+  ; atv_delta: float Rvar.t
+  ; atv_receiver: Network.node Rvar.t
+  ; theoretical_efficiency: float }
 
 type result =
-  { block_cnt: int
-  ; attacker_block_cnt: int
-  ; attacker_vote_cnt: int
-  ; attacker_block_share: float
-  ; attacker_vote_share: float
+  { (* stats derived from state after simulation *)
+    block_cnt: int
   ; branches: int
   ; branch_depth: int
-  ; atv_cnt: int
   ; max_vote: float
   ; max_vote_mean: float
   ; max_vote_sd: float
@@ -113,177 +217,114 @@ type result =
   ; regularized_efficiency: float
   ; block_time: float }
 
-type 'a column = {title: string; f: 'a -> string}
-type row = {p: params; r: result}
+let graph_data ~r ~s ~(p : Params.t) : Graphml.data =
+  let open Graphml in
+  let i n = Double (float_of_int n)
+  and f x = Double x
+  and string x = String x in
+  [ ("quorum_size", i p.quorum_size)
+  ; ("churn_rate", f p.churn)
+  ; ("churn_eclipse_time", f p.eclipse_time)
+  ; ("leader_failure_rate", f p.leader_failure_rate)
+  ; ("topology", string p.topology)
+  ; ("n_nodes", i (Graph.cardinality s.net))
+  ; ("n_branches", i r.branches)
+  ; ("branch_depth", i r.branch_depth)
+  ; ("n_blocks", i r.block_cnt)
+  ; ("max_vote", f r.max_vote)
+  ; ("max_vote_mean", f r.max_vote_mean)
+  ; ("max_vote_sd", f r.max_vote_sd)
+  ; ("efficiency", f r.efficiency)
+  ; ("atv_count", i s.atv_count)
+  ; ("theoretical_efficiency", f s.theoretical_efficiency)
+  ; ("regularized_efficiency", f r.regularized_efficiency)
+  ; ("block_time", f r.block_time) ]
 
-let cols : row column list =
-  let i = string_of_int
-  and f = string_of_float
-  and s = string_of_strategy
-  and d = string_of_distribution in
-  [ {title= "p.strategy"; f= (fun x -> s x.p.strategy)}
-  ; {title= "p.n_blocks"; f= (fun x -> i x.p.n_blocks)}
-  ; {title= "p.n_nodes"; f= (fun x -> i x.p.n_nodes)}
-  ; {title= "p.quorum_size"; f= (fun x -> i x.p.quorum_size)}
-  ; {title= "p.alpha"; f= (fun x -> f x.p.alpha)}
-  ; {title= "p.lat_dist"; f= (fun x -> d x.p.lat_dist)}
-  ; {title= "p.latency"; f= (fun x -> f x.p.latency)}
-  ; { title= "p.vote_latency"
-    ; f=
-        (fun x ->
-          f (match x.p.vote_latency with Some x -> x | None -> x.p.latency) )
-    }
-  ; {title= "p.churn"; f= (fun x -> f x.p.churn)}
-  ; {title= "p.eclipse_time"; f= (fun x -> f x.p.eclipse_time)}
-  ; {title= "p.leader_failure_rate"; f= (fun x -> f x.p.leader_failure_rate)}
-  ; {title= "r.branches"; f= (fun x -> i x.r.branches)}
-  ; {title= "r.branch_depth"; f= (fun x -> i x.r.branch_depth)}
-  ; {title= "r.block_cnt"; f= (fun x -> i x.r.block_cnt)}
-  ; {title= "r.attacker_block_cnt"; f= (fun x -> i x.r.attacker_block_cnt)}
-  ; {title= "r.attacker_vote_cnt"; f= (fun x -> i x.r.attacker_vote_cnt)}
-  ; {title= "r.attacker_block_share"; f= (fun x -> f x.r.attacker_block_share)}
-  ; {title= "r.attacker_vote_share"; f= (fun x -> f x.r.attacker_vote_share)}
-  ; {title= "r.atv_cnt"; f= (fun x -> i x.r.atv_cnt)}
-  ; {title= "r.max_vote"; f= (fun x -> f x.r.max_vote)}
-  ; {title= "r.max_vote_mean"; f= (fun x -> f x.r.max_vote_mean)}
-  ; {title= "r.max_vote_sd"; f= (fun x -> f x.r.max_vote_sd)}
-  ; {title= "r.efficiency"; f= (fun x -> f x.r.efficiency)}
-  ; { title= "r.regularized_efficiency"
-    ; f= (fun x -> f x.r.regularized_efficiency) }
-  ; {title= "r.block_time"; f= (fun x -> f x.r.block_time)} ]
+let graph ~p ~r ~s =
+  let g = Network.to_graphml s.net in
+  {g with data= graph_data ~r ~s ~p @ g.data}
 
-let cols_progress : row column list =
-  let i = string_of_int and f = string_of_float in
-  [ {title= "r.block_cnt"; f= (fun x -> i x.r.block_cnt)}
-  ; {title= "r.branches"; f= (fun x -> i x.r.branches)}
-  ; {title= "r.branch_depth"; f= (fun x -> i x.r.branch_depth)}
-  ; {title= "r.attacker_block_share"; f= (fun x -> f x.r.attacker_block_share)}
-  ; {title= "r.attacker_vote_share"; f= (fun x -> f x.r.attacker_vote_share)}
-  ; { title= "r.regularized_efficiency"
-    ; f= (fun x -> f x.r.regularized_efficiency) }
-  ; {title= "r.block_time"; f= (fun x -> f x.r.block_time)} ]
-
-let csv_head cols = String.concat "," (List.map (fun x -> x.title) cols)
-let csv_row cols row = String.concat "," (List.map (fun x -> x.f row) cols)
-
-type net_event =
-  | Broadcast of {src: int; cnt: int; m: message}
-  | Deliver of {src: int; rcv: int; cnt: int; m: message}
-
-type event = ATV of {nth: int; node: int} | Net of net_event | Shutdown
-type eclipse = {till: float; queue: net_event Queue.t}
-type node = {m: (module Node); mutable eclipse: eclipse option}
-
-type state =
-  { mutable height: int
-  ; mutable atv_cnt: int
-  ; mutable shutdown: bool
-  ; attacker_id: DSA.public_key
-  ; attacker_secret: DSA.private_key
-  ; atv_rate: float
-  ; best_case_efficiency: float
-  ; nodes: node array }
-
-let string_of_block b =
-  let open Link in
-  Printf.sprintf "Block %s->%s" (hash b |> to_string) (to_string b.parent)
-
-let string_of_vote (lnk, _, _) =
-  Printf.sprintf "Vote for %s" (Link.to_string lnk)
-
-let string_of_message = function
-  | Block b -> string_of_block b
-  | Vote v -> string_of_vote v
-
-let string_of_event =
-  let open Printf in
-  function
-  | Net (Broadcast {src; cnt; m}) ->
-      sprintf "n%i sends m%i: %s" src cnt (string_of_message m)
-  | Net (Deliver {rcv; cnt; m; _}) ->
-      sprintf "deliver m%i to n%i: %s" cnt rcv (string_of_message m)
-  | ATV {nth; node} -> sprintf "assign %ith ATV to n%i" nth node
-  | Shutdown -> sprintf "stop simulation"
-
-module Event = struct
-  (* Imperative interface for functional event queue *)
-  open Event_queue
-
-  let eq : event t ref = ref empty
-  let time = ref 0.
-  let schedule ?(delay = 0.) event = eq := schedule !eq (!time +. delay) event
-
-  let next () =
-    let time', event, eq' = next !eq in
-    time := time' ;
-    eq := eq' ;
-    (time', event)
-
-  let empty () = !eq = empty
-end
-
-let rec eclipse_random_node till nodes =
-  (* Pick a node but not the attacker *)
+let rec eclipse_random_node till (nodes : Network.node array) =
+  let open Network in
+  let open Graph in
+  (* TODO: exclude attacker nodes *)
   let i = Random.int (Array.length nodes - 1) + 1 in
-  match nodes.(i).eclipse with
+  let data = nodes.(i).data in
+  match data.eclipse with
   | Some _ -> eclipse_random_node till nodes
-  | None -> nodes.(i).eclipse <- Some {queue= Queue.create (); till}
+  | None -> data.eclipse <- Some {queue= Queue.create (); till}
 
 (* Get time of next ATV and assign random ATV recipient. *)
-let schedule_atv ~p ~s nth =
-  let delay = draw Exponential (1. /. s.atv_rate)
-  and node =
-    if Random.float 1. <= p.alpha then 0
-    else Random.int (Array.length s.nodes - 1) + 1
-  in
-  Event.schedule ~delay (ATV {nth; node})
+let schedule_atv ~s () =
+  let delay = Rvar.sample s.atv_delta and node = Rvar.sample s.atv_receiver in
+  Event.Queue.schedule ~delay (ATV {nth= s.atv_count; node}) ;
+  s.atv_count <- s.atv_count + 1 ;
+  node.data.atv_count <- node.data.atv_count + 1
+
+let transfer_time ~latency ~bandwidth =
+  let open Rvar in
+  function
+  | Block _ ->
+      (* inventory + request + block transfer time *)
+      sample latency +. sample latency +. sample bandwidth
+  | Vote _ ->
+      (* Votes fit in one packet *)
+      sample latency
 
 let handle_event ~p ~s =
-  let handle_net = function
-    | Broadcast {m= Block _; src; _}
-      when src > 0 && Random.float 1. <= p.leader_failure_rate ->
-        (* leader fails. *) ()
-    | Broadcast {src; cnt; m} ->
-        let lat =
-          match (m, p.vote_latency) with Vote _, Some l -> l | _ -> p.latency
-        in
-        Array.iteri
-          (fun rcv _ ->
-            if rcv <> src then
-              let delay = if p.latency > 0. then draw p.lat_dist lat else 0. in
-              Event.schedule ~delay (Net (Deliver {src; rcv; cnt; m})) )
-          s.nodes
-    | Deliver x ->
-        let n = s.nodes.(x.rcv) in
-        let (module N) = n.m in
-        N.on_receive x.m
+  let open Network in
+  let flood ~src ~m =
+    List.iter
+      (fun (dst, ({latency; bandwidth; _} as data)) ->
+        let msg = {src; rcv= dst; m} in
+        Network.count_msg data m ;
+        Event.(Queue.schedule (Net (Send msg))) ;
+        let delay = transfer_time ~latency ~bandwidth m in
+        Event.(Queue.schedule ~delay (Net (Deliver msg))) )
+      Graph.(out_edges s.net src)
   in
-  let uneclipse n =
-    match n.eclipse with
+  let handle_net = function
+    | Deliver {rcv; m; _} ->
+        let n = s.nodes.(rcv) in
+        let (module N) = n.data.instance in
+        if N.on_receive m then flood ~m ~src:rcv
+    | Send _ -> ()
+    | Broadcast {m= Block _; src; _}
+    (* TODO: make this rvar bernoulli *)
+      when src > 0 && Random.float 1. <= Params.(p.leader_failure_rate) ->
+        (* leader fails. *) ()
+    | Broadcast {src; m} -> flood ~m ~src
+  in
+  let uneclipse (n : Network.node) =
+    match Graph.(n.data.eclipse) with
     | None -> ()
     | Some eclipse ->
         Queue.iter handle_net eclipse.queue ;
-        n.eclipse <- None
+        n.data.eclipse <- None
   in
+  let schedule_atv = schedule_atv ~s in
   function
-  | ATV {node; nth} ->
-      let (module N : Node) = s.nodes.(node).m in
-      if not s.shutdown then schedule_atv ~p ~s (nth + 1) ;
+  | Event.ATV {node; nth} ->
+      let (module N : Node) = node.data.instance in
+      if not s.shutdown then schedule_atv () ;
       N.on_atv nth
-  | Shutdown -> Array.iter uneclipse s.nodes
+  | Shutdown -> List.iter uneclipse (Graph.get_nodes s.net)
   | Net ev -> (
       let actor =
-        match ev with Broadcast {src; _} -> src | Deliver {rcv; _} -> rcv
+        match ev with
+        | Broadcast {src; _} | Send {src; _} -> src
+        | Deliver {rcv; _} -> rcv
       in
       let n = s.nodes.(actor) in
-      match n.eclipse with
+      match n.data.eclipse with
       | None -> handle_net ev
       | Some eclipse ->
-          if !Event.time < eclipse.till then Queue.push ev eclipse.queue
+          if !Event.Queue.time < eclipse.till then Queue.push ev eclipse.queue
           else (
             uneclipse n ;
             handle_net ev ;
-            eclipse_random_node (!Event.time +. p.eclipse_time) s.nodes ) )
+            eclipse_random_node (!Event.Queue.time +. p.eclipse_time) s.nodes )
+      )
 
 let vote_threshold = Weight.max_weight
 
@@ -302,16 +343,16 @@ let vote_threshold = Weight.max_weight
 let quorum_threshold = Weight.max_weight / 4
 
 let broadcast =
-  let message_cnt = ref 0 in
-  fun nr ->
+  let open Network in
+  fun node_addr ->
     let module B = struct
-      let send m =
-        incr message_cnt ;
-        Event.schedule (Net (Broadcast {cnt= !message_cnt; m; src= nr}))
+      let send m = Event.Queue.schedule (Net (Broadcast {m; src= node_addr}))
     end in
     (module B : Broadcast)
 
-let spawn ~p id secret strategy =
+let spawn ~p ~addr implementation =
+  let open Params in
+  let id, secret = DSA.generate_id () in
   let module Config = struct
     let quorum_size = p.quorum_size
     let vote_threshold = vote_threshold
@@ -319,8 +360,8 @@ let spawn ~p id secret strategy =
     let my_id = id
     let my_secret = secret
   end in
-  let (module Broadcast) = broadcast DSA.(int_of_id id)
-  and (module Implementation) = implementation_of_strategy strategy in
+  let (module Broadcast) = broadcast addr
+  and (module Implementation : Implementation) = implementation in
   (module Implementation.Spawn (Broadcast) (Config) : Node)
 
 module StateTree : sig
@@ -410,8 +451,10 @@ end
     out of sync *)
 let branch_analysis nodes =
   let open App in
-  let f n =
-    let (module N : Node) = n.m in
+  let open Graph in
+  let open Network in
+  let f (n : node) =
+    let (module N : Node) = n.data.instance in
     N.get_state ()
   in
   let states = Array.map f nodes in
@@ -462,72 +505,76 @@ let max_vote_weight_stats (module N : Node) =
 
 let get_height (module N : Node) = (N.get_state ()).height
 
-let from_uneclipsed get nodes =
+let from_uneclipsed get s =
+  let open Graph in
+  let open Network in
   let rec f seq =
     match seq () with
-    | Seq.Nil -> get nodes.(1).m
-    | Cons (n, seq) -> (
-      match n.eclipse with None -> get n.m | Some _ -> f seq )
+    | Seq.Nil -> get s.nodes.(0).data.instance
+    | Cons ((n : node), seq) -> (
+      match n.data.eclipse with None -> get n.data.instance | Some _ -> f seq )
   in
-  f Array.(sub nodes 1 (length nodes - 1) |> to_seq)
+  f Array.(to_seq s.nodes)
 
 let ratio a b = float_of_int a /. float_of_int b
 
 let result ~p ~s =
+  let open Params in
   let max_vote, max_vote_mean, max_vote_sd =
-    from_uneclipsed max_vote_weight_stats s.nodes
-  and block_time = !Event.time /. float_of_int (s.height + 3)
+    from_uneclipsed max_vote_weight_stats s
+  and block_time = !Event.Queue.time /. float_of_int (s.height + 3)
   and efficiency =
-    ratio ((s.height + 3) * p.quorum_size) s.atv_cnt
+    ratio ((s.height + 3) * p.quorum_size) s.atv_count
     (* plus three because 3 blocks are not yet committed *)
   in
-  let regularized_efficiency = efficiency /. s.best_case_efficiency
-  and attacker_block_cnt =
-    from_uneclipsed (count_leadership s.attacker_id) s.nodes
-  and attacker_vote_cnt = from_uneclipsed (count_votes s.attacker_id) s.nodes
+  let regularized_efficiency = efficiency /. s.theoretical_efficiency
   and block_cnt = s.height
   and branches, branch_depth = branch_analysis s.nodes in
   { block_cnt
-  ; attacker_block_cnt
-  ; attacker_block_share= ratio attacker_block_cnt block_cnt
-  ; attacker_vote_cnt
-  ; attacker_vote_share= ratio attacker_vote_cnt (block_cnt * p.quorum_size)
   ; branches
   ; branch_depth
   ; max_vote_mean
   ; max_vote_sd
   ; max_vote
-  ; atv_cnt= s.atv_cnt
   ; efficiency
   ; regularized_efficiency
   ; block_time }
 
-let init ~p =
+let raise_str_err = function Ok x -> x | Error str -> failwith str
+
+let init ~p graph =
+  let open Params in
   (* We generate ATV of max size vote_threshold. A portion of ATVs will not be
      included in quorums. Efficiency describes how much ATVs are lost due to
      simulation.  Churn, leader failure and attacker behaviour are not
      considered. From measurements we know that efficiency is described by
      n / (n + 1) * (2 q_threshold / vote_threshold)
   *)
-  let best_case_efficiency =
+  let theoretical_efficiency =
     ratio quorum_threshold vote_threshold
     *. 2.
     *. ratio p.quorum_size (p.quorum_size + 1)
-  and attacker_id, attacker_secret = DSA.generate_id () in
-  let atv_rate = 1. *. float_of_int p.quorum_size /. best_case_efficiency
-  and nodes : node array =
-    Array.init p.n_nodes (fun i ->
-        let m =
-          if i = 0 then spawn ~p attacker_id attacker_secret p.strategy
-          else
-            let id, secret = DSA.generate_id () in
-            spawn ~p id secret Naive
-        in
-        {m; eclipse= None} )
+  in
+  let spawn = spawn ~p in
+  let net = Network.of_graphml ~spawn graph in
+  let n_nodes = Graph.cardinality net in
+  let atv_rate = 1. *. float_of_int p.quorum_size /. theoretical_efficiency
+  and nodes : Network.node array = Graph.get_nodes net |> Array.of_list in
+  let atv_delta =
+    match Rvar.exponential' ~rate:atv_rate with
+    | `Ok a -> a
+    | _ -> failwith "invalid atv rate"
+  and atv_receiver =
+    List.map
+      (fun (n : Network.node) -> (Network.(Graph.(n.data.alpha)), n))
+      (Graph.get_nodes net)
+    |> Rvar.discrete
+    |> function
+    | `Ok v -> v | `Invalid_parameters s -> failwith ("topology: " ^ s)
   in
   let () =
     (* eclipse first set of nodes *)
-    let n = int_of_float (floor (float_of_int p.n_nodes *. p.churn)) in
+    let n = int_of_float (floor (float_of_int n_nodes *. p.churn)) in
     let d = p.eclipse_time /. float_of_int n in
     let rec eclipse n =
       if n = 0 then ()
@@ -538,61 +585,63 @@ let init ~p =
     eclipse n
   in
   { height= 0
-  ; atv_cnt= 0
+  ; atv_count= 0
   ; shutdown= false
-  ; attacker_id
-  ; attacker_secret
   ; atv_rate
-  ; best_case_efficiency
+  ; atv_delta
+  ; atv_receiver
+  ; net
+  ; theoretical_efficiency
   ; nodes }
 
 let event_filter verbosity = function
-  | Net (Deliver _) when verbosity >= 3 -> true
+  | Event.Net (Deliver _) when verbosity >= 3 -> true
   | ATV _ when verbosity >= 2 -> true
   | Net (Broadcast _) when verbosity >= 1 -> true
   | _ -> false
 
-let simulate p =
-  let s = init ~p in
+let simulate ~p ~s =
   let log t e =
-    if event_filter p.verbosity e then
-      Printf.printf "%14.5f    %s\n%!" t (string_of_event e)
-  and print_state =
-    if p.progress then fun () ->
-      let row = {p; r= result ~p ~s} in
-      Printf.eprintf "\r%s%!" (csv_row cols_progress row)
-    else fun () -> ()
+    if event_filter Params.(p.verbosity) e then
+      Printf.printf "%14.5f    %s\n%!" t (Event.to_string e)
   in
-  if p.progress then Printf.eprintf "%s\n%!" (csv_head cols_progress) ;
-  schedule_atv ~p ~s 1 ;
-  while not (Event.empty ()) do
-    let t, e = Event.next () in
+  schedule_atv ~s () ;
+  while not (Event.Queue.is_empty ()) do
+    let t, e = Event.Queue.next () in
     handle_event ~p ~s e ;
     log t e ;
     match e with
     | Net (Broadcast {m= Block _; _}) ->
-        s.height <- from_uneclipsed get_height s.nodes ;
+        s.height <- from_uneclipsed get_height s ;
         if s.height >= p.n_blocks then (
           s.shutdown <- true ;
-          Event.schedule Shutdown )
-    | ATV _ ->
-        s.atv_cnt <- s.atv_cnt + 1 ;
-        if s.atv_cnt mod (100000 / p.n_nodes) = 0 then print_state ()
+          Event.(Queue.schedule Shutdown) )
     | _ -> ()
   done ;
-  if p.progress then Printf.eprintf "\n%!" ;
   result ~p ~s
 
 let term =
   let f p =
-    check_params p ;
-    if p.header then (
-      print_endline (csv_head cols) ;
-      exit 0 ) ;
-    let row = {p; r= simulate p} in
-    print_endline (csv_row cols row)
+    Params.check p ;
+    let graph =
+      let c = if p.topology = "-" then stdin else open_in p.topology in
+      let r =
+        Ezxmlm.from_channel c |> snd |> Graphml.graph_of_xml |> raise_str_err
+      in
+      close_in c ; r
+    in
+    let s = init ~p graph in
+    let r = simulate ~p ~s in
+    let xml =
+      let graph = Network.to_graphml s.net and data = graph_data ~r ~s ~p in
+      Graphml.graph_to_xml {graph with data} |> raise_str_err
+    and c = if p.result = "-" then stdout else open_out p.result
+    and indent = if p.format then Some 2 else None in
+    let out = Xmlm.make_output ~nl:true ~indent (`Channel c) in
+    Ezxmlm.to_output out (None, xml) ;
+    close_out c
   in
-  Cmdliner.Term.(const f $ params_cmdliner_term ())
+  Cmdliner.Term.(const f $ Params.cmdliner_term ())
 
 let info = Cmdliner.(Term.info "sim" ~doc:"HotPow Simulator")
 let () = Cmdliner.(Term.exit @@ Term.eval (term, info))

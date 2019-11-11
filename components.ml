@@ -43,7 +43,11 @@ module type Node = sig
   type message
   type state
 
-  val on_receive : message -> unit
+  val on_receive : message -> bool
+  (** Handle received message. Returns true if message should be relayed and
+      broadcast thereby continued. *)
+
+  (* TODO: could also return something like Fresh | Old | Invalid. *)
 
   val work : unit -> unit
   (** Search ATVs with proof-of-work *)

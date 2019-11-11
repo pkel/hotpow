@@ -1,6 +1,6 @@
-(executable
- (name sim)
- (libraries cmdliner)
+(executables
+ (names sim topogen)
+ (libraries cmdliner simlib)
  (preprocess
   (pps ppx_deriving_cmdliner)))
 

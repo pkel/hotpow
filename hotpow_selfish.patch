@@ -1,23 +1,24 @@
-18c18
+19c19
 <   val progress : t -> block Link.t -> int
 ---
 >   val progress : t -> ?other_only:bool -> block Link.t -> int
-22a23,25
+23a24,26
 >   val my : t -> block Link.t -> vote list
 >   (** Get own votes for lnk. *)
 > 
-77a81,86
+85a89,94
 >   let my t lnk =
 >     match Hashtbl.find_opt t.ht lnk with
 >     | None -> []
 >     | Some votes ->
 >         Set.elements votes.my |> List.map (fun e -> (lnk, e.id, e.s))
 > 
-83c92
+87c96,97
 <   (* Take leadership by omitting others' votes *)
 ---
+> 
 >   (* Maximize number of own votes *)
-98,100c107,114
+102,104c112,119
 <           (* Consume merged votes into quorum of size t.q.size *)
 <           let rec f n sum acc seq =
 <             if n = t.q.size then Some (List.rev acc)
@@ -30,7 +31,7 @@
 >               Some
 >                 ( assert (Set.cardinal votes = t.q.size) ;
 >                   Set.elements votes |> List.map (fun e -> (e.id, e.s)) )
-104,108c118,128
+108,112c123,133
 <               | Cons (elt, tl) ->
 <                   let sum = sum + elt.weight in
 <                   if sum <= t.q.threshold * t.q.size then
@@ -48,25 +49,25 @@
 >                       , Set.(remove max votes |> add e) )
 >                   in
 >                   fill n sum votes seq
-110c130,133
+114c135,138
 <           f 0 0 [] Set.(to_seq (union votes.my other))
 ---
 >           let n = Set.cardinal votes.my
 >           and sum = Set.fold (fun e sum -> sum + e.weight) votes.my 0
 >           and seq = Set.to_seq other in
 >           fill n sum votes.my seq
-120c143
+124c148
 <   let progress t lnk =
 ---
 >   let progress t ?(other_only = false) lnk =
-131c154,157
+135c159,162
 <         f 0 0 Set.(to_seq (union votes.my votes.other) ())
 ---
 >         let incl =
 >           if other_only then votes.other else Set.union votes.my votes.other
 >         in
 >         f 0 0 Set.(to_seq incl ())
-365c391,400
+379c406,415
 <     if not (propose ~replace:true lnk) then Broadcast.send (Vote vote)
 ---
 >     (* If own votes cannot be released as block proposal, but foreign nodes

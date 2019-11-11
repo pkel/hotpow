@@ -2,8 +2,9 @@ docker=podman
 # In theory, this should work as well:
 # docker=sudo docker
 
+sim: export OCAMLRUNPARAM=b
 sim: build
-	OCAMLRUNPARAM=b _build/default/sim.exe
+	_build/default/topogen.exe | _build/default/sim.exe | xmllint --format -
 
 _build/static/sim.exe: *.ml *.patch patch.sh dune dune-workspace.static dune-project
 	$(docker) pull ocaml/opam2:alpine
@@ -21,7 +22,7 @@ static: _build/static/sim.exe
 	OCAMLRUNPARAM=b _build/static/sim.exe
 
 build:
-	dune build sim.exe
+	dune build @all
 
 watch:
 	fd 'ml|dune|sh' | entr -s 'make build'

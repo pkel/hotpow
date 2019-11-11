@@ -1,4 +1,4 @@
-365c365
+379c379
 <     if not (propose ~replace:true lnk) then Broadcast.send (Vote vote)
 ---
 >     ignore (propose ~replace:false lnk)

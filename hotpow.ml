@@ -6,8 +6,9 @@ module Poll : sig
 
   type t
 
-  val count : t -> vote -> unit
-  (** [count t vote] adds [vote] to the store. *)
+  val count : t -> vote -> bool
+  (** [count t vote] adds [vote] to the store and returns true if vote improved
+      progress. *)
 
   val lead : ?replace:bool -> t -> block Link.t -> quorum option
   (** [lead t lnk] checks for leadership on [lnk] and returns corresponding
@@ -50,30 +51,33 @@ end = struct
   type t =
     {ht: (block Link.t, ht_val) Hashtbl.t; q: quorum_config; me: DSA.public_key}
 
-  (* Add an element to [map], keep only first [n]. *)
-  let add_prune_max ~n x set =
-    Set.add x set
-    |> fun set ->
-    if Set.cardinal set > n then
-      let max = Set.max_elt set in
-      Set.remove max set
-    else set
-
   let count t ((lnk, id, s) as vote) =
     (* get from mutable store, default to empty votes *)
-    ( match Hashtbl.find_opt t.ht lnk with
-    | None ->
-        let votes = Set.{my= empty; other= empty} in
-        Hashtbl.add t.ht lnk votes ; votes
-    | Some x -> x )
+    let votes =
+      match Hashtbl.find_opt t.ht lnk with
+      | None ->
+          let votes = Set.{my= empty; other= empty} in
+          Hashtbl.add t.ht lnk votes ; votes
+      | Some x -> x
+    in
     (* count as own or foreign vote *)
-    |> (fun votes ->
-         let elt = {weight= Weight.weigh vote; id; s; prefer= id = t.me}
-         and n = t.q.size in
-         if elt.prefer then {votes with my= add_prune_max ~n elt votes.my}
-         else {votes with other= add_prune_max ~n elt votes.other} )
-    (* update mutable store *)
-    |> Hashtbl.replace t.ht lnk
+    let is_my = id = t.me in
+    let elt = {weight= Weight.weigh vote; id; s; prefer= is_my} in
+    let set = if is_my then votes.my else votes.other in
+    let set', freshness =
+      if Set.mem elt set then (set, false)
+      else
+        let set = Set.add elt set in
+        if Set.cardinal set > t.q.size then
+          let max = Set.max_elt set in
+          (Set.remove max set, max != elt)
+        else (set, true)
+    in
+    let votes' =
+      if is_my then {votes with my= set'} else {votes with other= set'}
+    in
+    let () = Hashtbl.replace t.ht lnk votes' in
+    freshness
 
   let gc ~keep t =
     Hashtbl.filter_map_inplace
@@ -175,14 +179,15 @@ module Chain : sig
   (** Blockchain. TODO: Fix interface documentation *)
   type t
 
-  val count_vote : t -> vote -> unit
+  val count_vote : t -> vote -> bool (* Returns true if vote is fresh *)
 
-  val add_block : t -> block -> unit
+  val add_block : t -> block Link.t -> block -> unit
   (** [add t block] adds [block] to store [t]. *)
 
   val create : Poll.t -> t
   (** [create ()] creates an empty block store. *)
 
+  val mem : t -> block Link.t -> bool
   val read_state : t -> App.state
   val head : t -> block
   val head_lnk : t -> block Link.t
@@ -267,8 +272,7 @@ end = struct
            in
            add t.attached a ; update_head t a ; attach t a )
 
-  let add_block t (b : block) =
-    let hash = Link.hash b in
+  let add_block t hash (b : block) =
     match get t.attached b.parent with
     | Some e ->
         let quorum = b.quorum and parent = b.parent in
@@ -285,8 +289,11 @@ end = struct
         t.head.received_detached <- hash :: t.head.received_detached
 
   let count_vote t ((lnk, _, _) as vote) =
-    Poll.count t.poll vote ;
-    match get t.attached lnk with Some a -> update_head t a | None -> ()
+    let fresh = Poll.count t.poll vote in
+    let () =
+      match get t.attached lnk with Some a -> update_head t a | None -> ()
+    in
+    fresh
 
   let head t = t.head.b
   let head_lnk t = t.head.hash
@@ -329,8 +336,8 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
         (* {{{ *)
         assert (valid_block q block) ;
         (* }}} *)
-        let before = Chain.head_lnk chain in
-        Chain.add_block chain block ;
+        let before = Chain.head_lnk chain and hash = Link.hash block in
+        Chain.add_block chain hash block ;
         (* Is the new block better than the old one? Then share! *)
         if before <> Chain.head_lnk chain then (
           Broadcast.send (Block block) ;
@@ -339,20 +346,27 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
     | None -> false
 
   let on_receive = function
-    | Vote ((lnk, _, _) as vote) ->
-        Chain.count_vote chain vote ;
+    | Vote ((lnk, _, _) as vote) when Weight.weigh vote <= vote_threshold ->
+        let better = Chain.count_vote chain vote in
         (* Propose using the new vote *)
-        ignore (propose ~replace:true lnk)
+        ignore (propose ~replace:true lnk) ;
+        better
+    | Vote _ -> false
     | Block block ->
-        (* Read votes from quorum *)
-        List.iter
-          (fun (id, s) -> Chain.count_vote chain (block.parent, id, s))
-          block.quorum ;
-        (* Consider adding the block *)
-        if valid_block (* {{{ *) q (* }}} *) block then
-          Chain.add_block chain block ;
-        (* Attempt to replace dishonest leader *)
-        ignore (propose ~replace:false block.parent)
+        let hash = Link.hash block in
+        if Chain.mem chain hash then false
+        else (
+          (* Read votes from quorum *)
+          List.iter
+            (fun (id, s) ->
+              ignore (Chain.count_vote chain (block.parent, id, s)) )
+            block.quorum ;
+          let valid = valid_block (* {{{ *) q (* }}} *) block in
+          (* Consider adding the block *)
+          if valid_block (* {{{ *) q (* }}} *) block then
+            Chain.add_block chain hash block ;
+          (* Attempt to replace dishonest leader *)
+          if propose ~replace:false block.parent then false else valid )
 
   (* The simulator triggers this event and sets trivial thresholds. *)
   let on_atv s =
@@ -361,7 +375,7 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
     (* {{{ *)
     assert (Weight.weigh vote <= vote_threshold) ;
     (* }}} *)
-    Chain.count_vote chain vote ;
+    ignore (Chain.count_vote chain vote) ;
     if not (propose ~replace:true lnk) then Broadcast.send (Vote vote)
 
   let work () =

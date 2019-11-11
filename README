@@ -1,3 +1,13 @@
+Outdated
+--------
+
+This README is outdated. You're looking at a WIP branch that does not yet
+support batched simulation. Instead, we run the simulation on graphml network
+topologies.
+
+HotPoW Simulation
+-----------------
+
 The simulation framework used for evaluating the HotPoW protocol proposal.
 
 Reproducing the results

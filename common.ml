@@ -66,6 +66,17 @@ type quorum_config = {size: int; threshold: int}
 type vote = block Link.t * DSA.public_key * solution
 type message = Block of block | Vote of vote
 
+let block_to_string b =
+  let open Link in
+  Printf.sprintf "Block %s->%s" (hash b |> to_string) (to_string b.parent)
+
+let vote_to_string (lnk, _, _) =
+  Printf.sprintf "Vote for %s" (Link.to_string lnk)
+
+let message_to_string = function
+  | Block b -> block_to_string b
+  | Vote v -> vote_to_string v
+
 module App = struct
   (** This dummy App keeps track of the block height and
       records the history of quorums. *)
