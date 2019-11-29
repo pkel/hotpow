@@ -1,0 +1,12 @@
+\documentclass[tikz]{standalone}
+
+\begin{document}
+\begin{tikzpicture}[>=stealth, x=13cm, y=13cm]
+  \begin{scope}[node/.style={draw, circle}]
+    \input{nodes-alpha}
+  \end{scope}
+  \begin{scope}[edge/.style={draw}]
+    \input{edges-lnk}
+  \end{scope}
+\end{tikzpicture}
+\end{document}

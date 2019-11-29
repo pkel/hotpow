@@ -1,0 +1,6 @@
+1. Run viz.R from the terminal or RStudio. This will produce some files
+   containing tikz code.
+2. Compile standalone.tex . It will include the previously generated tikz code
+   in a PDF plot representing the graph used in viz.R
+3. Compile beamer.tex . It will produce example slides where edge properties
+   are shown on selected slides only.

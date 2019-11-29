@@ -1,0 +1,29 @@
+\documentclass[]{beamer}
+\usepackage{tikz}
+
+\author{The HotPoW Authors}
+\title{TopoViz}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \maketitle
+\end{frame}
+
+\begin{frame}
+  \frametitle{Example Topology}
+
+  \begin{center}
+    \begin{tikzpicture}[>=stealth, x=10cm, y=7cm]
+      \begin{scope}[node/.style={draw, circle}]
+        \input{nodes-alpha}
+      \end{scope}
+      \begin{scope}[edge/.style={draw}]
+        \only<2>{\input{edges-1}}
+        \only<3>{\input{edges-lnk}}
+      \end{scope}
+    \end{tikzpicture}
+  \end{center}
+\end{frame}
+
+\end{document}
