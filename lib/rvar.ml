@@ -5,10 +5,7 @@ type _ t =
   | Uniform : {lower: float; delta: float} -> float t
   | Exponential : {neg_ev: float} -> float t
   | Discrete :
-      { p: float array
-      ; alias: int option array
-      ; el: 'a array
-      ; n: int }
+      {p: float array; alias: int option array; el: 'a array; n: int}
       -> 'a t
 
 let uniform ~lower ~upper =
@@ -48,18 +45,15 @@ let discrete =
           p.(i) <- 1. ;
           alias.(i) <- None ;
           f ([], large)
-      | [], [] -> Discrete {el; p; alias; n}
-    in
-    f
-  in
+      | [], [] -> Discrete {el; p; alias; n} in
+    f in
   fun l ->
     let sum, n, err =
       List.fold_left
         (fun (sum, i, err) (p, _) ->
           if p < 0. then (sum, i, Some "negative probability")
-          else (sum +. p, i + 1, err) )
-        (0., 0, None) l
-    in
+          else (sum +. p, i + 1, err))
+        (0., 0, None) l in
     match err with
     | Some err -> `Invalid_parameters err
     | None when n < 1 -> `Invalid_parameters "empty list"
@@ -69,7 +63,7 @@ let discrete =
           Array.init n (fun _i ->
               let e = snd (List.hd !r) in
               r := List.tl !r ;
-              e )
+              e)
         and p = Array.make n 0.
         and alias = Array.make n None
         and small, large, _ =
@@ -77,10 +71,8 @@ let discrete =
           List.fold_left
             (fun (s, l, i) (p, _) ->
               let p = p *. scale in
-              if p < 1. then ((p, i) :: s, l, i + 1)
-              else (s, (p, i) :: l, i + 1) )
-            ([], [], 0) l
-        in
+              if p < 1. then ((p, i) :: s, l, i + 1) else (s, (p, i) :: l, i + 1))
+            ([], [], 0) l in
         `Ok (init ~el ~n ~p ~alias (small, large))
 
 let sample : type a. a t -> a = function
@@ -123,14 +115,11 @@ let float_of_string s =
   match float_of_string_opt s with
   | Some f -> `Ok (constant f)
   | None -> (
-      let s =
-        if String.length s = 0 || s.[0] != '(' then "(" ^ s ^ ")" else s
-      in
+      let s = if String.length s = 0 || s.[0] != '(' then "(" ^ s ^ ")" else s in
       try
         Sexplib.Sexp.of_string s |> stringable_of_sexp |> float_of_stringable
       with
-      | Sexplib0.Sexp.Of_sexp_error (Failure s, _) | Failure s ->
-          `Parse_error s
+      | Sexplib0.Sexp.Of_sexp_error (Failure s, _) | Failure s -> `Parse_error s
       | _ -> `Parse_error "generic parse error" )
 
 let fail = function

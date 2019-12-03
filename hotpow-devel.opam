@@ -12,12 +12,12 @@ bug-reports: "https://github.com/pkel/hotpow/issues"
 homepage: "https://arxiv.org/abs/1907.13531"
 license: "none"
 dev-repo: "git+https://github.com/pkel/hotpow.git"
-synopsis: "HotPoW. Consensus Protocol & Simulation"
+synopsis: "Development Tools"
 description: ""
 depends: [
-  "dune" {build & >= "1.10"}
-  "sexplib" {build}
-  "ezxmlm" {build}
-  "ppx_sexp_conv" {build}
-  "ppx_deriving_cmdliner" {build}
+  "ocamlformat" {>= "0.12"}
+  "odig" {build}
+  "merlin" {>= "3"}
+  "ocp-indent" {build}
+  "odoc" {build}
 ]

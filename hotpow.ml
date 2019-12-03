@@ -1,152 +1,187 @@
-(* {{{ *)
-open Common
+open Primitives
 
-module Poll : sig
-  (** Helper module for counting votes and assembling quorums. *)
+(** Pure helper module for managing a single partial quorum. *)
+module PartialQuorum : sig
+  type t
 
+  val create : id:DSA.public_key -> config:quorum_config -> block Link.t -> t
+  (** [create ~id ~config ref] creates an empty partial quorum for [ref]. *)
+
+  val add : vote -> t -> bool * t
+  (** [add v t] adds the vote [v] to the partial quorum [t]. The returned
+      boolean indicates, whether the vote was new. *)
+
+  val progress : t -> int
+  (** [progress t] counts the number of votes in the partial quorum. *)
+
+  val complete : ?replace:bool -> t -> quorum option
+  (** [complete ?replace t] attempts to return a complete quorum for the id and
+      reference given to {create}. If replace is true (default), the function
+      attempts to replace the truthful leader by omitting small foreign votes. *)
+end = struct
+  module Elt = struct
+    type t = {size: int; prefer: bool; id: DSA.public_key; sol: solution}
+
+    let compare a b =
+      let w = Int.compare a.size b.size in
+      if w <> 0 then w
+      else
+        let p = compare a.prefer b.prefer in
+        if p <> 0 then p else compare a b
+  end
+
+  module Set = Set.Make (Elt)
+  open Elt
+
+  type t =
+    { for_block: block Link.t
+    ; me: DSA.public_key
+    ; threshold: int
+    ; quorum_size: int
+    ; own: Set.t
+    ; foreign: Set.t }
+
+  let create ~id ~(config : quorum_config) for_block =
+    { for_block
+    ; threshold= config.threshold
+    ; quorum_size= config.size
+    ; me= id
+    ; own= Set.empty
+    ; foreign= Set.empty }
+
+  let add ((ref, id, sol) as vote) t =
+    if ref <> t.for_block then failwith "invalid ref"
+    else
+      let size = Weight.weigh vote in
+      if Int.compare size t.threshold > 0 then (false, t)
+      else
+        let mine = id = t.me in
+        let elt = {size; id; sol; prefer= mine} in
+        if mine then
+          if Set.mem elt t.own then (false, t)
+          else (true, {t with own= Set.add elt t.own})
+        else if Set.mem elt t.foreign then (false, t)
+        else (true, {t with foreign= Set.add elt t.foreign})
+
+  let complete ?(replace = true) t =
+    (* TODO: derive feasibility of quorum from (cached) cardinals of the set *)
+    match Set.min_elt_opt t.own with
+    | None -> None
+    | Some my_best -> (
+        (* drop small votes of other nodes in order to replace leader*)
+        let foreign =
+          if replace then
+            let _, _, above = Set.split my_best t.foreign in
+            above
+          else t.foreign in
+        (* merge foreign votes into set of own votes in order to complete quorum *)
+        let merged =
+          let rec f n acc seq =
+            if n >= t.quorum_size then acc
+            else
+              match seq () with
+              | Seq.Nil -> acc
+              | Cons (elt, tl) -> f (n + 1) (Set.add elt acc) tl in
+          f (Set.cardinal t.own) t.own Set.(to_seq foreign) in
+        (* consume merged votes into quorum *)
+        let quorum =
+          let rec f n acc seq =
+            if n = t.quorum_size then Some (List.rev acc)
+            else
+              match seq () with
+              | Seq.Nil -> None
+              | Cons (elt, tl) -> f (n + 1) ((elt.id, elt.sol) :: acc) tl in
+          f 0 [] (Set.to_seq merged) in
+        (* for replace=false we have to make sure that we lead *)
+        if replace then quorum
+        else
+          match quorum with
+          | None -> None
+          | Some ((id, _) :: _ as q) -> if id = t.me then Some q else None
+          | Some _l -> raise (Failure "produced empty quorum") )
+
+  let progress t = Set.cardinal t.own + Set.cardinal t.foreign
+end
+
+(** Impure module for managing multiple partial quorums indexed by block reference.
+    This is a thin wrapper around the functions exposed by {PartialQuorum}. *)
+module VoteStore : sig
   type t
 
   val count : t -> vote -> bool
-  (** [count t vote] adds [vote] to the store and returns true if vote improved
-      progress. *)
+  (** See {PartialQuorum.add}. *)
 
-  val lead : ?replace:bool -> t -> block Link.t -> quorum option
-  (** [lead t lnk] checks for leadership on [lnk] and returns corresponding
-      quorum. Per default, this does leader replacement by omitting small
-      foreign votes. The leader replacement can be deactivated with
-      [~replace:false]. *)
+  val quorum : ?replace:bool -> t -> block Link.t -> quorum option
+  (** See {PartialQuorum.complete}. *)
 
   val progress : t -> block Link.t -> int
-  (** [progress t lnk] maps the progress on a quorum for [lnk] to integer
-      scale for comparison. The higher the output, the more likely it is that
-      [lnk] will make it. *)
+  (** See {PartialQuorum.progress}. *)
 
   val gc : keep:(block Link.t -> bool) -> t -> unit
   (** Garbage collection. [gc ~keep t] drops all votes for references from [t],
       for which [keep lnk] yields [false]. *)
 
-  val create : q:quorum_config -> DSA.public_key -> t
-  (** [create ~q id] sets up a vote store that produces quorums for the given
-      [id]. *)
+  val create : id:DSA.public_key -> config:quorum_config -> t
+  (** [create ~id ~config] sets up a vote store that produces quorums for the
+      given id. Also see {PartialQuorum.create}. *)
 end = struct
-  module Elt = struct
-    type t = {weight: int; prefer: bool; id: DSA.public_key; s: solution}
-
-    let compare a b =
-      let w = compare a.weight b.weight in
-      if w != 0 then w
-      else
-        let p = compare a.prefer b.prefer in
-        if p != 0 then p else compare (a.id, a.s) (b.id, b.s)
-  end
-
-  open Elt
-
-  (* Partial quorum is stored as set. *)
-  module Set = Set.Make (Elt)
-
-  (* We keep foreign and own votes separate and merge when needed. *)
-  type ht_val = {my: Set.t; other: Set.t}
-
   type t =
-    {ht: (block Link.t, ht_val) Hashtbl.t; q: quorum_config; me: DSA.public_key}
+    { config: quorum_config
+    ; id: DSA.public_key
+    ; ht: (block Link.t, PartialQuorum.t) Hashtbl.t }
 
-  let count t ((lnk, id, s) as vote) =
-    (* get from mutable store, default to empty votes *)
+  let create ~id ~config = {config; ht= Hashtbl.create 5; id}
+
+  let count t ((ref, _, _) as vote) =
+    let config = t.config and id = t.id in
     let votes =
-      match Hashtbl.find_opt t.ht lnk with
-      | None ->
-          let votes = Set.{my= empty; other= empty} in
-          Hashtbl.add t.ht lnk votes ; votes
-      | Some x -> x
-    in
-    (* count as own or foreign vote *)
-    let is_my = id = t.me in
-    let elt = {weight= Weight.weigh vote; id; s; prefer= is_my} in
-    let set = if is_my then votes.my else votes.other in
-    let set', freshness =
-      if Set.mem elt set then (set, false)
-      else
-        let set = Set.add elt set in
-        if Set.cardinal set > t.q.size then
-          let max = Set.max_elt set in
-          (Set.remove max set, max != elt)
-        else (set, true)
-    in
-    let votes' =
-      if is_my then {votes with my= set'} else {votes with other= set'}
-    in
-    let () = Hashtbl.replace t.ht lnk votes' in
+      match Hashtbl.find_opt t.ht ref with
+      | None -> PartialQuorum.create ~id ~config ref
+      | Some x -> x in
+    let freshness, votes = PartialQuorum.add vote votes in
+    Hashtbl.replace t.ht ref votes ;
     freshness
 
   let gc ~keep t =
-    Hashtbl.filter_map_inplace
-      (fun k v -> if keep k then Some v else None)
-      t.ht
+    Hashtbl.filter_map_inplace (fun k v -> if keep k then Some v else None) t.ht
 
-  (* Take leadership by omitting others' votes *)
-  let lead ?(replace = true) t lnk =
-    match Hashtbl.find_opt t.ht lnk with
-    | Some votes -> (
-      (* no vote -> no lead *)
-      match Set.min_elt_opt votes.my with
-      | None -> None
-      | Some my_best -> (
-          (* drop small votes of honest nodes for leader replacement *)
-          let other =
-            if replace then
-              let _, _, above = Set.split my_best votes.other in
-              above
-            else votes.other
-          in
-          (* Consume merged votes into quorum of size t.q.size *)
-          let rec f n sum acc seq =
-            if n = t.q.size then Some (List.rev acc)
-            else
-              match seq () with
-              | Seq.Nil -> None
-              | Cons (elt, tl) ->
-                  let sum = sum + elt.weight in
-                  if sum <= t.q.threshold * t.q.size then
-                    f (n + 1) sum ((elt.id, elt.s) :: acc) tl
-                  else None
-          in
-          f 0 0 [] Set.(to_seq (union votes.my other))
-          |>
-          (* for replace=false we have to make sure that we lead *)
-          if replace then fun x -> x
-          else function
-            | None -> None
-            | Some ((id, _) :: _ as q) -> if id = t.me then Some q else None
-            | Some _l -> raise (Failure "produced empty quorum") ) )
-    | _ -> None
-
-  let progress t lnk =
-    match Hashtbl.find_opt t.ht lnk with
+  let progress t ref =
+    match Hashtbl.find_opt t.ht ref with
     | None -> 0
-    | Some votes ->
-        let rec f i acc = function
-          | Seq.Nil -> i
-          | Cons (e, seq) ->
-              let sum = acc + e.weight in
-              if sum <= (i + 1) * t.q.threshold then f (i + 1) sum (seq ())
-              else i
-        in
-        f 0 0 Set.(to_seq (union votes.my votes.other) ())
+    | Some votes -> PartialQuorum.progress votes
 
-  let create ~q me = {ht= Hashtbl.create 5; q; me}
+  let quorum ?replace t ref =
+    match Hashtbl.find_opt t.ht ref with
+    | None -> None
+    | Some votes -> PartialQuorum.complete ?replace votes
 end
 
+(** Impure module for storing blocks indexed by hash and parent hash. *)
 module BlockStore : sig
   type 'a t
+  (** An ['a t] stores values of type ['a].*)
+
   type 'a key = {parent: 'a -> block Link.t; this: 'a -> block Link.t}
+  (** An ['a key] provides functions to read the ['a]'s block hash and parent hash. *)
 
   val create : 'a key -> 'a t
+  (** [create key] sets up an empty store. Elements will be indexed using the
+      functions in key. *)
+
   val get : 'a t -> block Link.t -> 'a option
+  (** [get t ref] returns the block [b] where [key.this b = ref] if available. *)
+
   val add : 'a t -> 'a -> unit
+  (** Add a block to the store *)
+
   val rm : 'a t -> block Link.t -> unit
+  (** [rm t ref] removes the block [b] with [key.this b = ref]. *)
+
   val mem : 'a t -> block Link.t -> bool
+  (** [mem t ref] returns true iif [get t ref] returns [Some _]. *)
+
   val successors : 'a t -> block Link.t -> 'a list
+  (** [successors t ref] returns all blocks [b] where [key.parent b = ref]. *)
 end = struct
   type 'a key = {parent: 'a -> block Link.t; this: 'a -> block Link.t}
 
@@ -175,18 +210,45 @@ end = struct
   let successors t = Hashtbl.find_all t.by_prnt
 end
 
+let valid_quorum ~config ref quorum =
+  let quorum =
+    List.map (fun (id, s) -> (id, s, Weight.weigh (ref, id, s))) quorum in
+  let rec is_sorted_and_duplicate_free = function
+    | [] | [_] -> true
+    | (id, s, w) :: (id', s', w') :: _
+      when compare w w' > 0 || (id, s) = (id', s') ->
+        false
+    | _ :: tl -> is_sorted_and_duplicate_free tl in
+  List.length quorum == config.size
+  && List.for_all (fun (_, _, w) -> compare config.threshold w >= 0) quorum
+  && is_sorted_and_duplicate_free quorum
+
+let valid_block ~config (block : block) =
+  valid_quorum ~config block.parent block.quorum
+  && DSA.verify
+       ~id:(fst (List.nth block.quorum 0))
+       (block.parent, block.quorum, block.body)
+       block.signature
+
+(** (invalid) root block *)
+let genesis : block =
+  let parent = Obj.magic Link.hash "genesis block"
+  and quorum = [(Obj.magic 0, 0)] in
+  { parent
+  ; quorum
+  ; body= () (* This transition will not be executed *)
+  ; signature= Obj.magic "signed by Satoshi" }
+
+(** Mutable state for the HotPoW protocol. Implements a receive window for
+    blocks. Maintains Application state. *)
 module Chain : sig
-  (** Blockchain. TODO: Fix interface documentation *)
   type t
 
-  val count_vote : t -> vote -> bool (* Returns true if vote is fresh *)
+  val count_vote : t -> vote -> bool
+  (** Returns true if vote was fresh. *)
 
   val add_block : t -> block Link.t -> block -> unit
-  (** [add t block] adds [block] to store [t]. *)
-
-  val create : Poll.t -> t
-  (** [create ()] creates an empty block store. *)
-
+  val create : VoteStore.t -> t
   val mem : t -> block Link.t -> bool
   val read_state : t -> App.state
   val head : t -> block
@@ -207,7 +269,7 @@ end = struct
     ; mutable truth: attached
     ; detached: detached BlockStore.t
     ; attached: attached BlockStore.t
-    ; poll: Poll.t (* TODO: votes could be stored in the same indexed ds *) }
+    ; votes: VoteStore.t }
 
   open BlockStore
 
@@ -224,17 +286,16 @@ end = struct
       || candidate.height = t.head.height
          && ( leader_weight candidate.b < leader_weight t.head.b
             || leader_weight candidate.b = leader_weight t.head.b
-               && Poll.(
-                    progress t.poll candidate.hash
-                    > progress t.poll t.head.hash) )
+               && VoteStore.(
+                    progress t.votes candidate.hash
+                    > progress t.votes t.head.hash) )
     then (
       let parent (a : attached) =
         match get t.attached a.b.parent with
         | Some a -> a
         | None when t.truth.height > 0 ->
             raise (Failure "Premature garbage collection")
-        | None -> raise Not_found
-      in
+        | None -> raise Not_found in
       (* Update head and commit *)
       t.head <- candidate ;
       let old_truth = t.truth in
@@ -249,7 +310,7 @@ end = struct
           (* drop all detached blocks received with old truth. *)
           List.iter (rm t.detached) old_truth.received_detached ;
           (* garbage collect votes TODO: avoid iteration *)
-          Poll.gc ~keep:(mem t) t.poll ;
+          VoteStore.gc ~keep:(mem t) t.votes ;
           (* set new truth *)
           t.truth <- new_truth
       | _ -> ()
@@ -268,9 +329,8 @@ end = struct
              ; height= to_.height + 1
              ; s= App.apply ~hash ~parent ~quorum b.body to_.s
              ; hash
-             ; received_detached= [] }
-           in
-           add t.attached a ; update_head t a ; attach t a )
+             ; received_detached= [] } in
+           add t.attached a ; update_head t a ; attach t a)
 
   let add_block t hash (b : block) =
     match get t.attached b.parent with
@@ -281,24 +341,22 @@ end = struct
           ; height= e.height + 1
           ; s= App.apply ~hash ~parent ~quorum b.body e.s
           ; hash
-          ; received_detached= [] }
-        in
+          ; received_detached= [] } in
         add t.attached a ; update_head t a ; attach t a
     | None ->
         add t.detached {b; hash; received_at= t.head.height} ;
         t.head.received_detached <- hash :: t.head.received_detached
 
   let count_vote t ((lnk, _, _) as vote) =
-    let fresh = Poll.count t.poll vote in
+    let fresh = VoteStore.count t.votes vote in
     let () =
-      match get t.attached lnk with Some a -> update_head t a | None -> ()
-    in
+      match get t.attached lnk with Some a -> update_head t a | None -> () in
     fresh
 
   let head t = t.head.b
   let head_lnk t = t.head.hash
 
-  let create poll =
+  let create votes =
     let hash = Link.hash genesis in
     let attached =
       create
@@ -309,33 +367,33 @@ end = struct
         { parent= (fun (a : detached) -> a.b.parent)
         ; this= (fun (a : detached) -> a.hash) }
     and head =
-      {height= 0; b= genesis; s= App.initial; hash; received_detached= []}
-    in
+      {height= 0; b= genesis; s= App.initial; hash; received_detached= []} in
     add attached head ;
-    {attached; head; detached; poll; truth= head}
+    {attached; head; detached; votes; truth= head}
 end
 
 module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
   open Config
 
-  let q = {size= quorum_size; threshold= quorum_threshold}
-  let poll = Poll.create ~q my_id
-  let chain = Chain.create poll
+  let config =
+    let open Config in
+    {size= quorum_size; threshold= quorum_threshold}
 
-  (* TODO: Avoid optional/named arguments in visible parts *)
+  let votes =
+    let config = {size= quorum_size; threshold= quorum_threshold}
+    and id = my_id in
+    VoteStore.create ~id ~config
+
+  let chain = Chain.create votes
+
   let propose ~replace lnk =
-    match Poll.lead ~replace poll lnk with
+    match VoteStore.quorum ~replace votes lnk with
     | Some quorum ->
-        (* {{{ *)
-        assert (valid_quorum q lnk quorum) ;
-        (* }}} *)
+        assert (valid_quorum ~config lnk quorum) ;
         let block =
           let body = App.propose () in
-          block ~lnk ~quorum ~body my_secret
-        in
-        (* {{{ *)
-        assert (valid_block q block) ;
-        (* }}} *)
+          block ~lnk ~quorum ~body my_secret in
+        assert (valid_block ~config block) ;
         let before = Chain.head_lnk chain and hash = Link.hash block in
         Chain.add_block chain hash block ;
         (* Is the new block better than the old one? Then share! *)
@@ -346,7 +404,7 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
     | None -> false
 
   let on_receive = function
-    | Vote ((lnk, _, _) as vote) when Weight.weigh vote <= vote_threshold ->
+    | Vote ((lnk, _, _) as vote) when Weight.weigh vote <= quorum_threshold ->
         let better = Chain.count_vote chain vote in
         (* Propose using the new vote *)
         ignore (propose ~replace:true lnk) ;
@@ -359,12 +417,11 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
           (* Read votes from quorum *)
           List.iter
             (fun (id, s) ->
-              ignore (Chain.count_vote chain (block.parent, id, s)) )
+              ignore (Chain.count_vote chain (block.parent, id, s)))
             block.quorum ;
-          let valid = valid_block (* {{{ *) q (* }}} *) block in
+          let valid = valid_block ~config block in
           (* Consider adding the block *)
-          if valid_block (* {{{ *) q (* }}} *) block then
-            Chain.add_block chain hash block ;
+          if valid_block ~config block then Chain.add_block chain hash block ;
           (* Attempt to replace dishonest leader *)
           if propose ~replace:false block.parent then false else valid )
 
@@ -372,9 +429,7 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
   let on_atv s =
     let lnk = Chain.head_lnk chain in
     let vote = (lnk, my_id, s) in
-    (* {{{ *)
-    assert (Weight.weigh vote <= vote_threshold) ;
-    (* }}} *)
+    assert (Weight.weigh vote <= config.threshold) ;
     ignore (Chain.count_vote chain vote) ;
     if not (propose ~replace:true lnk) then Broadcast.send (Vote vote)
 
@@ -382,13 +437,9 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
     let i = ref 0 in
     while true do
       incr i ;
-      if Weight.weigh (Chain.head_lnk chain, my_id, !i) <= vote_threshold then
+      if Weight.weigh (Chain.head_lnk chain, my_id, !i) <= config.threshold then
         on_atv !i
     done
 
-  (* {{{ *)
-
   let get_state () = Chain.read_state chain
 end
-
-(* }}} *)

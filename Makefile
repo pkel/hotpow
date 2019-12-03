@@ -4,35 +4,32 @@ docker=podman
 
 sim: export OCAMLRUNPARAM=b
 sim: build
-	_build/default/topogen.exe | _build/default/sim.exe | xmllint --format -
+	dune exec hotpow_topogen | dune exec hotpow_sim | xmllint --format -
 
-_build/static/sim.exe: *.ml *.patch patch.sh dune dune-workspace.static dune-project
-	$(docker) pull ocaml/opam2:alpine
-	$(docker) build -t hotpowsim  .
-	mkdir -p _build/static
-	tar -cf - $^ | $(docker) run -i hotpowsim bash -c "tar -xf - \
-	&& opam exec -- dune build --workspace dune-workspace.static sim.exe \
-	&& cat _build/default/sim.exe" > $@
-	chmod +x $@
-
-clean:
-	rm -r _build
-
-static: _build/static/sim.exe
-	OCAMLRUNPARAM=b _build/static/sim.exe
+static: export OCAMLRUNPARAM=b
+static: docker_build_static
+	_build/static/bin/hotpow_topogen | _build/static/bin/hotpow_sim | xmllint --format -
 
 build:
-	dune build @all
+	dune build
 
 watch:
-	fd 'ml|dune|sh' | entr -s 'make build'
+	dune build -w
 
 format:
 	dune build @fmt --auto-promote
 
-upload:
-	git archive -o _build/hotpow.zip HEAD .
-	curl -F "file=@_build/hotpow.zip" https://anonfiles.com/api/upload |\
-		jq -r '.data.file.url.short' |\
-		awk '{ print "\\url{" $$1 "}%"}' |\
-		tee ../code-url.tex
+deps:
+	opam install . --deps-only
+
+clean:
+	rm -r _build
+
+docker_build_static: lib/* *.ml dune dune-workspace.static
+	$(docker) pull ocaml/opam2:alpine
+	$(docker) build -t hotpowsim  .
+	mkdir -p _build/static/bin
+	tar -cf - $^ | $(docker) run -i hotpowsim bash -c "tar -xf - \
+	&& opam exec -- dune build --workspace dune-workspace.static \
+	&& tar -chf - -C _build/install/default/bin hotpow_sim hotpow_topogen" |\
+		tar -xf - -C _build/static/bin

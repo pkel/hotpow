@@ -1,4 +1,4 @@
-open Common
+open Primitives
 
 type t = Naive | Censor | Censor_simple | Selfish
 

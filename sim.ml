@@ -1,7 +1,7 @@
 let () = Random.self_init ()
 
 open Simlib
-open Common
+open Primitives
 
 module Params = struct
   [@@@ocaml.warning "-39"]
@@ -37,8 +37,7 @@ module Params = struct
   let check p =
     let fail p msg =
       Printf.eprintf "Invalid parameter --%s: %s\n%!" p msg ;
-      exit 1
-    in
+      exit 1 in
     if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
     if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
     if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
@@ -48,11 +47,11 @@ module Params = struct
 end
 
 module Network = struct
+  type address = int
   (** {1} Simulated Network
 
       Simulated network based on annotated {!Graph}.
   *)
-  type address = int
 
   type msg = {src: address; rcv: address; m: message}
 
@@ -93,16 +92,13 @@ module Network = struct
     let rvar x = String (Rvar.float_to_string x) in
     let strategy x = String (Strategy.to_string x) in
     let e data =
-      [ ("latency", rvar data.latency)
-      ; ("bandwidth", rvar data.bandwidth)
+      [ ("latency", rvar data.latency); ("bandwidth", rvar data.bandwidth)
       ; ("messages_transferred", int data.messages_transferred)
       ; ("blocks_transferred", int data.blocks_transferred)
       ; ("votes_transferred", int data.votes_transferred) ]
     and n data =
-      [ ("alpha", Double data.alpha)
-      ; ("strategy", strategy data.strategy)
-      ; ("atv_count", int data.atv_count) ]
-    in
+      [ ("alpha", Double data.alpha); ("strategy", strategy data.strategy)
+      ; ("atv_count", int data.atv_count) ] in
     Graph.to_graphml ~n ~e
 
   let of_graphml
@@ -132,12 +128,10 @@ module Network = struct
       | Some (String s) -> Rvar.(float_of_string s |> fail)
       | Some (Double d) -> Rvar.constant d
       | None -> Rvar.constant default
-      | _ -> failwith (strf "unexpected data type for field \"%s\"" key)
-    in
+      | _ -> failwith (strf "unexpected data type for field \"%s\"" key) in
     let n ~id data =
       let strategy =
-        string ~default:"naive" "strategy" data |> Strategy.of_string
-      in
+        string ~default:"naive" "strategy" data |> Strategy.of_string in
       { strategy
       ; instance= Strategy.to_implementation strategy |> spawn ~addr:id
       ; alpha= float ~default:1. "alpha" data
@@ -148,8 +142,7 @@ module Network = struct
       ; bandwidth= rvar ~default:0. "bandwidth" data
       ; messages_transferred= int ~default:0 "messages_transferred" data
       ; blocks_transferred= int ~default:0 "blocks_transferred" data
-      ; votes_transferred= int ~default:0 "votes_transferred" data }
-    in
+      ; votes_transferred= int ~default:0 "votes_transferred" data } in
     Graph.of_graphml ~n ~e
 end
 
@@ -179,9 +172,7 @@ module Event = struct
 
     let eq : event t ref = ref empty
     let time = ref 0.
-
-    let schedule ?(delay = 0.) event =
-      eq := schedule !eq (!time +. delay) event
+    let schedule ?(delay = 0.) event = eq := schedule !eq (!time +. delay) event
 
     let next () =
       let time', event, eq' = next !eq in
@@ -202,8 +193,7 @@ type simulation =
   ; mutable atv_count: int
   ; atv_rate: float
   ; atv_delta: float Rvar.t
-  ; atv_receiver: Network.node Rvar.t
-  ; theoretical_efficiency: float }
+  ; atv_receiver: Network.node Rvar.t }
 
 type result =
   { (* stats derived from state after simulation *)
@@ -214,30 +204,19 @@ type result =
   ; max_vote_mean: float
   ; max_vote_sd: float
   ; efficiency: float
-  ; regularized_efficiency: float
   ; block_time: float }
 
 let graph_data ~r ~s ~(p : Params.t) : Graphml.data =
   let open Graphml in
-  let i n = Double (float_of_int n)
-  and f x = Double x
-  and string x = String x in
-  [ ("quorum_size", i p.quorum_size)
-  ; ("churn_rate", f p.churn)
+  let i n = Double (float_of_int n) and f x = Double x and string x = String x in
+  [ ("quorum_size", i p.quorum_size); ("churn_rate", f p.churn)
   ; ("churn_eclipse_time", f p.eclipse_time)
   ; ("leader_failure_rate", f p.leader_failure_rate)
-  ; ("topology", string p.topology)
-  ; ("n_nodes", i (Graph.cardinality s.net))
-  ; ("n_branches", i r.branches)
-  ; ("branch_depth", i r.branch_depth)
-  ; ("n_blocks", i r.block_cnt)
-  ; ("max_vote", f r.max_vote)
-  ; ("max_vote_mean", f r.max_vote_mean)
-  ; ("max_vote_sd", f r.max_vote_sd)
-  ; ("efficiency", f r.efficiency)
-  ; ("atv_count", i s.atv_count)
-  ; ("theoretical_efficiency", f s.theoretical_efficiency)
-  ; ("regularized_efficiency", f r.regularized_efficiency)
+  ; ("topology", string p.topology); ("n_nodes", i (Graph.cardinality s.net))
+  ; ("n_branches", i r.branches); ("branch_depth", i r.branch_depth)
+  ; ("n_blocks", i r.block_cnt); ("max_vote", f r.max_vote)
+  ; ("max_vote_mean", f r.max_vote_mean); ("max_vote_sd", f r.max_vote_sd)
+  ; ("efficiency", f r.efficiency); ("atv_count", i s.atv_count)
   ; ("block_time", f r.block_time) ]
 
 let graph ~p ~r ~s =
@@ -280,9 +259,8 @@ let handle_event ~p ~s =
         Network.count_msg data m ;
         Event.(Queue.schedule (Net (Send msg))) ;
         let delay = transfer_time ~latency ~bandwidth m in
-        Event.(Queue.schedule ~delay (Net (Deliver msg))) )
-      Graph.(out_edges s.net src)
-  in
+        Event.(Queue.schedule ~delay (Net (Deliver msg))))
+      Graph.(out_edges s.net src) in
   let handle_net = function
     | Deliver {rcv; m; _} ->
         let n = s.nodes.(rcv) in
@@ -293,15 +271,13 @@ let handle_event ~p ~s =
     (* TODO: make this rvar bernoulli *)
       when src > 0 && Random.float 1. <= Params.(p.leader_failure_rate) ->
         (* leader fails. *) ()
-    | Broadcast {src; m} -> flood ~m ~src
-  in
+    | Broadcast {src; m} -> flood ~m ~src in
   let uneclipse (n : Network.node) =
     match Graph.(n.data.eclipse) with
     | None -> ()
     | Some eclipse ->
         Queue.iter handle_net eclipse.queue ;
-        n.data.eclipse <- None
-  in
+        n.data.eclipse <- None in
   let schedule_atv = schedule_atv ~s in
   function
   | Event.ATV {node; nth} ->
@@ -313,8 +289,7 @@ let handle_event ~p ~s =
       let actor =
         match ev with
         | Broadcast {src; _} | Send {src; _} -> src
-        | Deliver {rcv; _} -> rcv
-      in
+        | Deliver {rcv; _} -> rcv in
       let n = s.nodes.(actor) in
       match n.data.eclipse with
       | None -> handle_net ev
@@ -326,21 +301,7 @@ let handle_event ~p ~s =
             eclipse_random_node (!Event.Queue.time +. p.eclipse_time) s.nodes )
       )
 
-let vote_threshold = Weight.max_weight
-
-(* Every 4th ATV is below the threshold. According to the max vote weight stats,
-   the probability that a vote with weight 4 * qthreshold is included is very
-   low. *)
-(* TODO: Derive threshold instead of looking at stats.
-   For qsize = 1, vthreshold = qthreshold
-       qsize = 2, every included vote is below 2*qthreshold
-       qsize = n, what is the probability that the maximal included
-                  vote is bigger than x when v_threshold = inf?
-
-   Goal: cut off votes which are unlikely to end up in a quorum in order to
-         safe bandwidth.
-*)
-let quorum_threshold = Weight.max_weight / 4
+let quorum_threshold = Weight.max_weight
 
 let broadcast =
   let open Network in
@@ -355,7 +316,6 @@ let spawn ~p ~addr implementation =
   let id, secret = DSA.generate_id () in
   let module Config = struct
     let quorum_size = p.quorum_size
-    let vote_threshold = vote_threshold
     let quorum_threshold = quorum_threshold
     let my_id = id
     let my_secret = secret
@@ -455,12 +415,10 @@ let branch_analysis nodes =
   let open Network in
   let f (n : node) =
     let (module N : Node) = n.data.instance in
-    N.get_state ()
-  in
+    N.get_state () in
   let states = Array.map f nodes in
   let history state =
-    List.rev_map (fun c -> Hashtbl.hash c.hash) state.entries
-  in
+    List.rev_map (fun c -> Hashtbl.hash c.hash) state.entries in
   Array.map history states |> Array.to_seq |> StateTree.of_seq
   |> fun st -> StateTree.(branches st, depth st)
 
@@ -485,22 +443,19 @@ let max_vote_weight_stats (module N : Node) =
     (N.get_state ()).entries
     |> List.map (fun t ->
            List.(nth (rev t.quorum) 0)
-           |> fun (id, s) -> Weight.weigh (t.parent, id, s) |> float_of_int )
+           |> fun (id, s) -> Weight.weigh (t.parent, id, s) |> float_of_int)
   in
   let n, mean, max =
     let n, sum, max =
       List.fold_left
         (fun (n, sum, m) w -> (n + 1, w +. sum, max w m))
-        (0, 0., 0.) weights
-    in
-    (n, sum /. float_of_int n, max)
-  in
+        (0, 0., 0.) weights in
+    (n, sum /. float_of_int n, max) in
   let sd =
     let esum =
       List.fold_left (fun esum w -> ((w -. mean) ** 2.) +. esum) 0. weights
     in
-    sqrt (esum /. float_of_int n)
-  in
+    sqrt (esum /. float_of_int n) in
   (max, mean, sd)
 
 let get_height (module N : Node) = (N.get_state ()).height
@@ -525,10 +480,8 @@ let result ~p ~s =
   and block_time = !Event.Queue.time /. float_of_int (s.height + 3)
   and efficiency =
     ratio ((s.height + 3) * p.quorum_size) s.atv_count
-    (* plus three because 3 blocks are not yet committed *)
-  in
-  let regularized_efficiency = efficiency /. s.theoretical_efficiency
-  and block_cnt = s.height
+    (* plus three because 3 blocks are not yet committed *) in
+  let block_cnt = s.height
   and branches, branch_depth = branch_analysis s.nodes in
   { block_cnt
   ; branches
@@ -537,28 +490,16 @@ let result ~p ~s =
   ; max_vote_sd
   ; max_vote
   ; efficiency
-  ; regularized_efficiency
   ; block_time }
 
 let raise_str_err = function Ok x -> x | Error str -> failwith str
 
 let init ~p graph =
   let open Params in
-  (* We generate ATV of max size vote_threshold. A portion of ATVs will not be
-     included in quorums. Efficiency describes how much ATVs are lost due to
-     simulation.  Churn, leader failure and attacker behaviour are not
-     considered. From measurements we know that efficiency is described by
-     n / (n + 1) * (2 q_threshold / vote_threshold)
-  *)
-  let theoretical_efficiency =
-    ratio quorum_threshold vote_threshold
-    *. 2.
-    *. ratio p.quorum_size (p.quorum_size + 1)
-  in
   let spawn = spawn ~p in
   let net = Network.of_graphml ~spawn graph in
   let n_nodes = Graph.cardinality net in
-  let atv_rate = 1. *. float_of_int p.quorum_size /. theoretical_efficiency
+  let atv_rate = float_of_int p.quorum_size
   and nodes : Network.node array = Graph.get_nodes net |> Array.of_list in
   let atv_delta =
     match Rvar.exponential' ~rate:atv_rate with
@@ -570,8 +511,7 @@ let init ~p graph =
       (Graph.get_nodes net)
     |> Rvar.discrete
     |> function
-    | `Ok v -> v | `Invalid_parameters s -> failwith ("topology: " ^ s)
-  in
+    | `Ok v -> v | `Invalid_parameters s -> failwith ("topology: " ^ s) in
   let () =
     (* eclipse first set of nodes *)
     let n = int_of_float (floor (float_of_int n_nodes *. p.churn)) in
@@ -580,10 +520,8 @@ let init ~p graph =
       if n = 0 then ()
       else (
         eclipse_random_node (float_of_int n *. d) nodes ;
-        eclipse (n - 1) )
-    in
-    eclipse n
-  in
+        eclipse (n - 1) ) in
+    eclipse n in
   { height= 0
   ; atv_count= 0
   ; shutdown= false
@@ -591,7 +529,6 @@ let init ~p graph =
   ; atv_delta
   ; atv_receiver
   ; net
-  ; theoretical_efficiency
   ; nodes }
 
 let event_filter verbosity = function
@@ -603,8 +540,7 @@ let event_filter verbosity = function
 let simulate ~p ~s =
   let log t e =
     if event_filter Params.(p.verbosity) e then
-      Printf.printf "%14.5f    %s\n%!" t (Event.to_string e)
-  in
+      Printf.printf "%14.5f    %s\n%!" t (Event.to_string e) in
   schedule_atv ~s () ;
   while not (Event.Queue.is_empty ()) do
     let t, e = Event.Queue.next () in
@@ -628,8 +564,7 @@ let term =
       let r =
         Ezxmlm.from_channel c |> snd |> Graphml.graph_of_xml |> raise_str_err
       in
-      close_in c ; r
-    in
+      close_in c ; r in
     let s = init ~p graph in
     let r = simulate ~p ~s in
     let xml =
@@ -639,8 +574,7 @@ let term =
     and indent = if p.format then Some 2 else None in
     let out = Xmlm.make_output ~nl:true ~indent (`Channel c) in
     Ezxmlm.to_output out (None, xml) ;
-    close_out c
-  in
+    close_out c in
   Cmdliner.Term.(const f $ Params.cmdliner_term ())
 
 let info = Cmdliner.(Term.info "sim" ~doc:"HotPow Simulator")

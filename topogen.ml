@@ -27,8 +27,7 @@ include struct
 
   type params =
     { nodes: int [@default 32] [@aka ["n"]]  (** Set number of nodes. *)
-    ; clique: bool [@default false]
-          (** Generate fully interconnected graph. *)
+    ; clique: bool [@default false]  (** Generate fully interconnected graph. *)
     ; alpha: float Rvar.t
           [@default default_alpha] [@conv rvar_conv] [@aka ["a"]]
           (** Set distribution of computational power. *)
@@ -61,8 +60,7 @@ module Topo = struct
     let e data =
       [("latency", rvar data.latency); ("bandwidth", rvar data.latency)]
     and n data =
-      [("alpha", Double data.alpha); ("strategy", strategy data.strategy)]
-    in
+      [("alpha", Double data.alpha); ("strategy", strategy data.strategy)] in
     Graph.to_graphml ~n ~e
 
   let clique ~alpha ~latency ~bandwidth n =
@@ -75,11 +73,9 @@ module Topo = struct
             List.init n (fun dst ->
                 ( dst
                 , { latency= Rvar.sample latency
-                  ; bandwidth= Rvar.sample bandwidth } ) )
-            |> List.filter (fun (dst, _) -> dst <> self)
-          in
-          (node, peers) )
-    in
+                  ; bandwidth= Rvar.sample bandwidth } ))
+            |> List.filter (fun (dst, _) -> dst <> self) in
+          (node, peers)) in
     Graph.create nodes
 
   let random ~alpha ~latency ~bandwidth ~d n =
@@ -92,10 +88,9 @@ module Topo = struct
         all.(self) <- true ;
         while !i < d do
           let j = Random.int n in
-          if not all.(j) then ( all.(j) <- true ; incr i )
+          if not all.(j) then (all.(j) <- true ; incr i)
         done ;
-        all.(self) <- false
-      in
+        all.(self) <- false in
       let peers =
         Array.to_seqi all
         |> Seq.filter_map (fun (dst, b) ->
@@ -104,20 +99,17 @@ module Topo = struct
                    ( dst
                    , { latency= Rvar.sample latency
                      ; bandwidth= Rvar.sample bandwidth } )
-               else None )
-        |> List.of_seq
-      in
+               else None)
+        |> List.of_seq in
       ( Graph.{id= self; data= {alpha= Rvar.sample alpha; strategy= Naive}}
-      , peers )
-    in
+      , peers ) in
     List.init n node |> Graph.create
 end
 
 let check_params p =
   let fail p msg =
     Printf.eprintf "Invalid parameter --%s: %s\n%!" p msg ;
-    exit 1
-  in
+    exit 1 in
   if p.nodes < 1 then fail "nodes" "must be >= 1" ;
   if p.out_degree < 1 then fail "out-degree" "must be >= 1" ;
   if p.out_degree >= p.nodes then fail "out-degree" "must be < p.nodes"
@@ -129,8 +121,7 @@ let main ({latency; bandwidth; nodes; alpha; _} as p) =
     let latency = Rvar.constant latency
     and bandwidth = Rvar.constant bandwidth in
     if p.clique then Topo.clique ~alpha ~latency ~bandwidth nodes
-    else Topo.random ~alpha ~latency ~bandwidth nodes ~d:p.out_degree
-  in
+    else Topo.random ~alpha ~latency ~bandwidth nodes ~d:p.out_degree in
   Topo.to_graphml topo |> Graphml.graph_to_xml
   |> (function Ok x -> x | Error s -> failwith s)
   |> fun g ->
