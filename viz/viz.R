@@ -15,8 +15,8 @@ lnk <- vertex_attr(g,"alpha", index=head_of(g, 1:n.edges)) * vertex_attr(g,"alph
 lnk <- lnk / mean(lnk)
 lnk <- abs(rnorm(n.edges, lnk, 1))
 
-g <- set_edge_attr(g, "latency", value = lnk * 0.001)
-g <- set_edge_attr(g, "bandwidth", value = lnk * 0.1)
+g <- set_edge_attr(g, "delta_vote", value = lnk * 0.001)
+g <- set_edge_attr(g, "delta_block", value = lnk * 0.1)
 
 # Fix the layout for the graph
 l <- layout_nicely(g)

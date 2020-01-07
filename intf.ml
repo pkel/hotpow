@@ -44,8 +44,8 @@ module type Node = sig
   type state
 
   val on_receive : message -> bool
-  (** Handle received message. Returns true if message should be relayed and
-      broadcast thereby continued. *)
+  (** Handle received message. Returns true iff message was fresh (Implies
+      message should be relayed and broadcast continued). *)
 
   (* TODO: could also return something like Fresh | Old | Invalid. *)
 

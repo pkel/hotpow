@@ -10,15 +10,15 @@ g <- set_vertex_attr(g, "strategy", value="naive")
 # exponentially distributed computational power
 g <- set_vertex_attr(g, "alpha", value=rexp(n.nodes, 1))
 
-# latency & bandwidth. We assume that this depends on computational strength
+# latency & bandwidth. We assume that this is linked to computational strength
 lnk <- vertex_attr(g,"alpha", index=head_of(g, 1:n.edges)) *
   vertex_attr(g,"alpha", index=tail_of(g, 1:n.edges))
 lnk <- lnk / mean(lnk)
 lnk <- abs(rnorm(n.edges, lnk, 1))
 
-g <- set_edge_attr(g, "latency",
+g <- set_edge_attr(g, "delta_vote",
                    value=paste("Uniform", lnk * 0.0005, lnk * 0.0015))
-g <- set_edge_attr(g, "bandwidth",
+g <- set_edge_attr(g, "delta_block",
                    value=paste("Uniform", lnk * 0.005, lnk * 0.015))
 
 p <- function () {

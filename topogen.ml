@@ -15,11 +15,11 @@ include struct
   (* Cmdliner PPX is not yet prepared for this: *)
   (* Cmdliner.Arg.conv ~docv:"DISTRIBUTION" (parse, print) *)
 
-  let default_latency = Rvar.(exponential ~ev:0.00001 |> fail)
+  let default_delta_vote = Rvar.(exponential ~ev:0.00001 |> fail)
 
   (* 60 ms *)
 
-  let default_bandwidth = Rvar.(uniform ~lower:0.001 ~upper:0.002 |> fail)
+  let default_delta_block = Rvar.(uniform ~lower:0.001 ~upper:0.002 |> fail)
 
   (* 0.6s - 1.2s *)
 
@@ -31,12 +31,12 @@ include struct
     ; alpha: float Rvar.t
           [@default default_alpha] [@conv rvar_conv] [@aka ["a"]]
           (** Set distribution of computational power. *)
-    ; bandwidth: float Rvar.t
-          [@default default_bandwidth] [@conv rvar_conv] [@aka ["b"]]
-          (** Set bandwidth distribution. *)
-    ; latency: float Rvar.t
-          [@default default_latency] [@conv rvar_conv] [@aka ["l"]]
-          (** Set latency distribution. *)
+    ; delta_vote: float Rvar.t
+          [@default default_delta_vote] [@conv rvar_conv] [@aka ["v"]]
+          (** Set distribution of edge's vote propagation delay. *)
+    ; delta_block: float Rvar.t
+          [@default default_delta_block] [@conv rvar_conv] [@aka ["b"]]
+          (** Set distribution of edge's block propagation delay. *)
     ; out_degree: int
           [@default 8]
           [@aka ["d"]]
@@ -49,7 +49,7 @@ end
 module Topo = struct
   type node_data = {alpha: float; strategy: Strategy.t}
 
-  and edge_data = {latency: float Rvar.t; bandwidth: float Rvar.t}
+  and edge_data = {delta_vote: float Rvar.t; delta_block: float Rvar.t}
 
   type t = (node_data, edge_data) Graph.t
 
@@ -58,12 +58,13 @@ module Topo = struct
     let rvar x = String (Rvar.float_to_string x) in
     let strategy x = String (Strategy.to_string x) in
     let e data =
-      [("latency", rvar data.latency); ("bandwidth", rvar data.latency)]
+      [ ("delta_vote", rvar data.delta_vote)
+      ; ("delta_block", rvar data.delta_block) ]
     and n data =
       [("alpha", Double data.alpha); ("strategy", strategy data.strategy)] in
     Graph.to_graphml ~n ~e
 
-  let clique ~alpha ~latency ~bandwidth n =
+  let clique ~alpha ~delta_vote ~delta_block n =
     if n < 1 then failwith "n < 1" ;
     let nodes =
       List.init n (fun self ->
@@ -72,13 +73,13 @@ module Topo = struct
           and peers =
             List.init n (fun dst ->
                 ( dst
-                , { latency= Rvar.sample latency
-                  ; bandwidth= Rvar.sample bandwidth } ))
+                , { delta_vote= Rvar.sample delta_vote
+                  ; delta_block= Rvar.sample delta_block } ))
             |> List.filter (fun (dst, _) -> dst <> self) in
           (node, peers)) in
     Graph.create nodes
 
-  let random ~alpha ~latency ~bandwidth ~d n =
+  let random ~alpha ~delta_vote ~delta_block ~d n =
     if n < 1 then failwith "n < 1" ;
     if d >= n then failwith "d >= n" ;
     let node self =
@@ -97,8 +98,8 @@ module Topo = struct
                if b then
                  Some
                    ( dst
-                   , { latency= Rvar.sample latency
-                     ; bandwidth= Rvar.sample bandwidth } )
+                   , { delta_vote= Rvar.sample delta_vote
+                     ; delta_block= Rvar.sample delta_block } )
                else None)
         |> List.of_seq in
       ( Graph.{id= self; data= {alpha= Rvar.sample alpha; strategy= Naive}}
@@ -114,14 +115,14 @@ let check_params p =
   if p.out_degree < 1 then fail "out-degree" "must be >= 1" ;
   if p.out_degree >= p.nodes then fail "out-degree" "must be < p.nodes"
 
-let main ({latency; bandwidth; nodes; alpha; _} as p) =
+let main ({delta_vote; delta_block; nodes; alpha; _} as p) =
   check_params p ;
   let indent = if p.format then Some 2 else None in
   let topo =
-    let latency = Rvar.constant latency
-    and bandwidth = Rvar.constant bandwidth in
-    if p.clique then Topo.clique ~alpha ~latency ~bandwidth nodes
-    else Topo.random ~alpha ~latency ~bandwidth nodes ~d:p.out_degree in
+    let delta_block = Rvar.constant delta_block
+    and delta_vote = Rvar.constant delta_vote in
+    if p.clique then Topo.clique ~alpha ~delta_block ~delta_vote nodes
+    else Topo.random ~alpha ~delta_block ~delta_vote nodes ~d:p.out_degree in
   Topo.to_graphml topo |> Graphml.graph_to_xml
   |> (function Ok x -> x | Error s -> failwith s)
   |> fun g ->

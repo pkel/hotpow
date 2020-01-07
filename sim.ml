@@ -46,6 +46,25 @@ module Params = struct
       fail "leader-failure-rate" "must be in [0,1]"
 end
 
+module AccMean : sig
+  type t
+
+  val empty : t
+  (** The empty accumulator *)
+
+  val add : float -> t -> t
+  (** Add one value to the average. *)
+
+  val mean : t -> float
+  (** Extract mean from accumulator. Returns NaN for empty accumulator. *)
+end = struct
+  type t = {sum: float; n: int}
+
+  let empty = {sum= 0.; n= 0}
+  let add x {sum; n} = {sum= x +. sum; n= n + 1}
+  let mean {sum; n} = if n > 0 then sum /. float_of_int n else Float.nan
+end
+
 module Network = struct
   type address = int
   (** {1} Simulated Network
@@ -53,7 +72,15 @@ module Network = struct
       Simulated network based on annotated {!Graph}.
   *)
 
-  type msg = {src: address; rcv: address; m: message}
+  type edge_data =
+    { delta_vote: float Rvar.t
+    ; delta_block: float Rvar.t
+    ; mutable blocks_delivered: int
+          (* number of fresh blocks delivered via this link *)
+    ; mutable votes_delivered: int
+          (* number of fresh votes delivered via this link *) }
+
+  type msg = {src: address; rcv: address; e: edge_data; sent: float; m: message}
 
   type event =
     | Send of msg
@@ -66,25 +93,23 @@ module Network = struct
     { alpha: float
     ; strategy: Strategy.t
     ; instance: (module Node)
+    ; mutable mean_delay_block: AccMean.t
+    ; mutable mean_delay_vote: AccMean.t
     ; mutable eclipse: eclipse option
     ; mutable atv_count: int }
-
-  type edge_data =
-    { latency: float Rvar.t
-    ; bandwidth: float Rvar.t
-    ; mutable messages_transferred: int
-    ; mutable blocks_transferred: int
-    ; mutable votes_transferred: int }
 
   type t = (node_data, edge_data) Graph.t
   type node = node_data Graph.node
   type edge = (node_data, edge_data) Graph.edge
 
-  let count_msg data msg =
-    data.messages_transferred <- data.messages_transferred + 1 ;
+  let count_msg ~delta ~n ~e msg =
     match msg with
-    | Block _ -> data.blocks_transferred <- data.blocks_transferred + 1
-    | Vote _ -> data.votes_transferred <- data.votes_transferred + 1
+    | Block _ ->
+        e.blocks_delivered <- e.blocks_delivered + 1 ;
+        n.mean_delay_block <- AccMean.add delta n.mean_delay_block
+    | Vote _ ->
+        e.votes_delivered <- e.votes_delivered + 1 ;
+        n.mean_delay_vote <- AccMean.add delta n.mean_delay_vote
 
   let to_graphml =
     let open Graphml in
@@ -92,13 +117,15 @@ module Network = struct
     let rvar x = String (Rvar.float_to_string x) in
     let strategy x = String (Strategy.to_string x) in
     let e data =
-      [ ("latency", rvar data.latency); ("bandwidth", rvar data.bandwidth)
-      ; ("messages_transferred", int data.messages_transferred)
-      ; ("blocks_transferred", int data.blocks_transferred)
-      ; ("votes_transferred", int data.votes_transferred) ]
+      [ ("delta_vote", rvar data.delta_vote)
+      ; ("delta_block", rvar data.delta_block)
+      ; ("blocks_delivered", int data.blocks_delivered)
+      ; ("votes_delivered", int data.votes_delivered) ]
     and n data =
       [ ("alpha", Double data.alpha); ("strategy", strategy data.strategy)
-      ; ("atv_count", int data.atv_count) ] in
+      ; ("atv_count", int data.atv_count)
+      ; ("mean_delta_block", Double (AccMean.mean data.mean_delay_block))
+      ; ("mean_delta_vote", Double (AccMean.mean data.mean_delay_vote)) ] in
     Graph.to_graphml ~n ~e
 
   let of_graphml
@@ -136,13 +163,14 @@ module Network = struct
       ; instance= Strategy.to_implementation strategy |> spawn ~addr:id
       ; alpha= float ~default:1. "alpha" data
       ; eclipse= None
-      ; atv_count= int ~default:0 "atv_count" data }
+      ; atv_count= int ~default:0 "atv_count" data
+      ; mean_delay_block= AccMean.empty
+      ; mean_delay_vote= AccMean.empty }
     and e data =
-      { latency= rvar ~default:0. "latency" data
-      ; bandwidth= rvar ~default:0. "bandwidth" data
-      ; messages_transferred= int ~default:0 "messages_transferred" data
-      ; blocks_transferred= int ~default:0 "blocks_transferred" data
-      ; votes_transferred= int ~default:0 "votes_transferred" data } in
+      { delta_vote= rvar ~default:0. "delta_vote" data
+      ; delta_block= rvar ~default:0. "delta_block" data
+      ; blocks_delivered= int ~default:0 "blocks_delivered" data
+      ; votes_delivered= int ~default:0 "votes_delivered" data } in
     Graph.of_graphml ~n ~e
 end
 
@@ -172,6 +200,7 @@ module Event = struct
 
     let eq : event t ref = ref empty
     let time = ref 0.
+    let now () = !time
     let schedule ?(delay = 0.) event = eq := schedule !eq (!time +. delay) event
 
     let next () =
@@ -236,42 +265,36 @@ let rec eclipse_random_node till (nodes : Network.node array) =
 (* Get time of next ATV and assign random ATV recipient. *)
 let schedule_atv ~s () =
   let delay = Rvar.sample s.atv_delta and node = Rvar.sample s.atv_receiver in
-  Event.Queue.schedule ~delay (ATV {nth= s.atv_count; node}) ;
-  s.atv_count <- s.atv_count + 1 ;
-  node.data.atv_count <- node.data.atv_count + 1
-
-let transfer_time ~latency ~bandwidth =
-  let open Rvar in
-  function
-  | Block _ ->
-      (* inventory + request + block transfer time *)
-      sample latency +. sample latency +. sample bandwidth
-  | Vote _ ->
-      (* Votes fit in one packet *)
-      sample latency
+  Event.Queue.schedule ~delay (ATV {nth= s.atv_count; node})
 
 let handle_event ~p ~s =
   let open Network in
-  let flood ~src ~m =
+  let flood ~src ~m ~sent =
     List.iter
-      (fun (dst, ({latency; bandwidth; _} as data)) ->
-        let msg = {src; rcv= dst; m} in
-        Network.count_msg data m ;
+      (fun (dst, ({delta_vote; delta_block; _} as e)) ->
+        let msg = {src; rcv= dst; e; sent; m} in
         Event.(Queue.schedule (Net (Send msg))) ;
-        let delay = transfer_time ~latency ~bandwidth m in
+        let delay =
+          match m with
+          | Block _ -> Rvar.sample delta_block
+          | Vote _ -> Rvar.sample delta_vote in
         Event.(Queue.schedule ~delay (Net (Deliver msg))))
       Graph.(out_edges s.net src) in
   let handle_net = function
-    | Deliver {rcv; m; _} ->
-        let n = s.nodes.(rcv) in
-        let (module N) = n.data.instance in
-        if N.on_receive m then flood ~m ~src:rcv
+    | Deliver {rcv; m; e; sent; _} ->
+        let n = s.nodes.(rcv).data in
+        let (module N) = n.instance in
+        if N.on_receive m then (
+          let delta = Event.Queue.now () -. sent in
+          Network.count_msg ~delta ~e ~n m ;
+          flood ~m ~src:rcv ~sent )
     | Send _ -> ()
     | Broadcast {m= Block _; src; _}
     (* TODO: make this rvar bernoulli *)
+    (* TODO: make sure that only naive nodes fail. src>0 make no sense any more. *)
       when src > 0 && Random.float 1. <= Params.(p.leader_failure_rate) ->
         (* leader fails. *) ()
-    | Broadcast {src; m} -> flood ~m ~src in
+    | Broadcast {src; m} -> flood ~m ~src ~sent:(Event.Queue.now ()) in
   let uneclipse (n : Network.node) =
     match Graph.(n.data.eclipse) with
     | None -> ()
@@ -281,9 +304,12 @@ let handle_event ~p ~s =
   let schedule_atv = schedule_atv ~s in
   function
   | Event.ATV {node; nth} ->
-      let (module N : Node) = node.data.instance in
-      if not s.shutdown then schedule_atv () ;
-      N.on_atv nth
+      if not s.shutdown then (
+        let (module N : Node) = node.data.instance in
+        s.atv_count <- s.atv_count + 1 ;
+        node.data.atv_count <- node.data.atv_count + 1 ;
+        schedule_atv () ;
+        N.on_atv nth )
   | Shutdown -> List.iter uneclipse (Graph.get_nodes s.net)
   | Net ev -> (
       let actor =
@@ -294,12 +320,12 @@ let handle_event ~p ~s =
       match n.data.eclipse with
       | None -> handle_net ev
       | Some eclipse ->
-          if !Event.Queue.time < eclipse.till then Queue.push ev eclipse.queue
+          let now = Event.Queue.now () in
+          if now < eclipse.till then Queue.push ev eclipse.queue
           else (
             uneclipse n ;
             handle_net ev ;
-            eclipse_random_node (!Event.Queue.time +. p.eclipse_time) s.nodes )
-      )
+            eclipse_random_node (now +. p.eclipse_time) s.nodes ) )
 
 let quorum_threshold = Weight.max_weight
 
@@ -477,7 +503,7 @@ let result ~p ~s =
   let open Params in
   let max_vote, max_vote_mean, max_vote_sd =
     from_uneclipsed max_vote_weight_stats s
-  and block_time = !Event.Queue.time /. float_of_int (s.height + 3)
+  and block_time = Event.Queue.now () /. float_of_int (s.height + 3)
   and efficiency =
     ratio ((s.height + 3) * p.quorum_size) s.atv_count
     (* plus three because 3 blocks are not yet committed *) in
@@ -544,15 +570,15 @@ let simulate ~p ~s =
   schedule_atv ~s () ;
   while not (Event.Queue.is_empty ()) do
     let t, e = Event.Queue.next () in
-    handle_event ~p ~s e ;
-    log t e ;
-    match e with
-    | Net (Broadcast {m= Block _; _}) ->
-        s.height <- from_uneclipsed get_height s ;
-        if s.height >= p.n_blocks then (
-          s.shutdown <- true ;
-          Event.(Queue.schedule Shutdown) )
-    | _ -> ()
+    let () =
+      match e with
+      | Net (Broadcast {m= Block _; src}) ->
+          s.height <- max (get_height s.nodes.(src).data.instance) s.height ;
+          if s.height >= p.n_blocks && not s.shutdown then (
+            s.shutdown <- true ;
+            Event.(Queue.schedule Shutdown) )
+      | _ -> () in
+    handle_event ~p ~s e ; log t e
   done ;
   result ~p ~s
 

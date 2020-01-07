@@ -405,10 +405,10 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
 
   let on_receive = function
     | Vote ((lnk, _, _) as vote) when Weight.weigh vote <= quorum_threshold ->
-        let better = Chain.count_vote chain vote in
+        let fresh = Chain.count_vote chain vote in
         (* Propose using the new vote *)
         ignore (propose ~replace:true lnk) ;
-        better
+        fresh
     | Vote _ -> false
     | Block block ->
         let hash = Link.hash block in
