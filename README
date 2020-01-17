@@ -1,4 +1,4 @@
-The simulation framework used for evaluating the HotPoW protocol proposal.
+HotPoW protocol implementation and network simulation framework.
 
 Reproducing the results
 -----------------------
@@ -30,7 +30,8 @@ If the compilation of the static executable within the container succeeded, you
 will find the simulation program in the _build folder. You can best explore its
 capabilities by running
 
-_build/static/sim.exe --help
+make docker_build_static
+_build/static/bin/hotpow_sim --help
 
 
 Going deeper
@@ -55,23 +56,6 @@ common.ml
 
 sim.ml
   Simulation as compiled to sim.exe
-
-
-Attacker
---------
-
-The attacker strategies are stored as patches relative to hotpow.ml. You can
-generate the attacker implementations by executing
-
-./patch.sh
-
-. Afterwards you can modify the attack strategies. The build process considers
-changes made to the generated hotpow_*.ml files. The patch files can be updated
-using
-
-./patch.sh update
-
-. Happy Hacking!
 
 
 [0]: https://podman.io/

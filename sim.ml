@@ -1,6 +1,6 @@
 let () = Random.self_init ()
 
-open Common
+open Primitives
 
 type distribution = Exponential | Uniform
 
@@ -16,24 +16,15 @@ let draw d p =
   | Uniform -> p *. Random.float 2.
   | Exponential -> -1. *. p *. log (Random.float 1.)
 
-type strategy = Naive | Censor | Censor_simple | Selfish
+type strategy = Naive | Censor
 
-let string_of_strategy = function
-  | Naive -> "naive"
-  | Censor -> "censor"
-  | Censor_simple -> "censor-simple"
-  | Selfish -> "selfish"
+let string_of_strategy = function Naive -> "naive" | Censor -> "censor"
 
 let implementation_of_strategy : strategy -> (module Implementation) = function
   | Naive -> (module Hotpow)
   | Censor -> (module Hotpow_censor)
-  | Censor_simple -> (module Hotpow_censor_simple)
-  | Selfish -> (module Hotpow_selfish)
 
-let strategy_enum =
-  List.map
-    (fun s -> (string_of_strategy s, s))
-    [Naive; Censor; Censor_simple; Selfish]
+let strategy_enum = List.map (fun s -> (string_of_strategy s, s)) [Naive; Censor]
 
 include struct
   [@@@ocaml.warning "-39"]
@@ -48,13 +39,13 @@ include struct
           (** Set adversaries relative compute power. *)
     ; strategy: strategy [@default Censor] [@aka ["s"]] [@enum strategy_enum]
           (** Set the attacker's strategy. *)
-    ; lat_dist: distribution
+    ; delta_dist: distribution
           [@default Exponential] [@aka ["d"]] [@enum distribution_enum]
-          (** Set the distribution of latencies. *)
-    ; latency: float [@default 0.] [@aka ["l"]]
-          (** Set the expected time delta between broadcast send and delivery
-              relative to expected block time. *)
-    ; vote_latency: float option  (** Set a custom latency for votes. *)
+          (** Set the distribution of propagation delays. *)
+    ; delta_vote: float [@default 0.]
+          (** Set the expected vote propagation delay. *)
+    ; delta_block: float [@default 0.]
+          (** Set the expected block propagation delay. *)
     ; eclipse_time: float [@default 10.]
           (** Set how long (multiple of expected block time) nodes are eclipsed
               from the network. Messages sent by or delivered to eclipsed nodes
@@ -81,21 +72,17 @@ end
 let check_params p =
   let fail p msg =
     Printf.eprintf "Invalid parameter --%s: %s\n%!" p msg ;
-    exit 1
-  in
+    exit 1 in
   if p.n_nodes < 2 then fail "n-blocks" "must be >= 2" ;
   if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
   if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
   if p.alpha < 0. || p.alpha > 1. then fail "alpha" "must be in [0,1]" ;
-  if p.latency < 0. then fail "latency" "must be >= 0" ;
-  match p.vote_latency with
-  | Some l when l < 0. -> fail "vote-latency" "must be >= 0"
-  | _ ->
-      () ;
-      if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
-      if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
-      if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
-        fail "leader-failure-rate" "must be in [0,1]"
+  if p.delta_vote < 0. then fail "delta-vote" "must be >= 0" ;
+  if p.delta_block < 0. then fail "delta-block" "must be >= 0" ;
+  if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
+  if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
+  if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
+    fail "leader-failure-rate" "must be in [0,1]"
 
 type result =
   { block_cnt: int
@@ -110,7 +97,6 @@ type result =
   ; max_vote_mean: float
   ; max_vote_sd: float
   ; efficiency: float
-  ; regularized_efficiency: float
   ; block_time: float }
 
 type 'a column = {title: string; f: 'a -> string}
@@ -126,13 +112,9 @@ let cols : row column list =
   ; {title= "p.n_nodes"; f= (fun x -> i x.p.n_nodes)}
   ; {title= "p.quorum_size"; f= (fun x -> i x.p.quorum_size)}
   ; {title= "p.alpha"; f= (fun x -> f x.p.alpha)}
-  ; {title= "p.lat_dist"; f= (fun x -> d x.p.lat_dist)}
-  ; {title= "p.latency"; f= (fun x -> f x.p.latency)}
-  ; { title= "p.vote_latency"
-    ; f=
-        (fun x ->
-          f (match x.p.vote_latency with Some x -> x | None -> x.p.latency) )
-    }
+  ; {title= "p.delta_dist"; f= (fun x -> d x.p.delta_dist)}
+  ; {title= "p.delta_vote"; f= (fun x -> f x.p.delta_vote)}
+  ; {title= "p.delta_block"; f= (fun x -> f x.p.delta_block)}
   ; {title= "p.churn"; f= (fun x -> f x.p.churn)}
   ; {title= "p.eclipse_time"; f= (fun x -> f x.p.eclipse_time)}
   ; {title= "p.leader_failure_rate"; f= (fun x -> f x.p.leader_failure_rate)}
@@ -148,8 +130,6 @@ let cols : row column list =
   ; {title= "r.max_vote_mean"; f= (fun x -> f x.r.max_vote_mean)}
   ; {title= "r.max_vote_sd"; f= (fun x -> f x.r.max_vote_sd)}
   ; {title= "r.efficiency"; f= (fun x -> f x.r.efficiency)}
-  ; { title= "r.regularized_efficiency"
-    ; f= (fun x -> f x.r.regularized_efficiency) }
   ; {title= "r.block_time"; f= (fun x -> f x.r.block_time)} ]
 
 let cols_progress : row column list =
@@ -159,8 +139,6 @@ let cols_progress : row column list =
   ; {title= "r.branch_depth"; f= (fun x -> i x.r.branch_depth)}
   ; {title= "r.attacker_block_share"; f= (fun x -> f x.r.attacker_block_share)}
   ; {title= "r.attacker_vote_share"; f= (fun x -> f x.r.attacker_vote_share)}
-  ; { title= "r.regularized_efficiency"
-    ; f= (fun x -> f x.r.regularized_efficiency) }
   ; {title= "r.block_time"; f= (fun x -> f x.r.block_time)} ]
 
 let csv_head cols = String.concat "," (List.map (fun x -> x.title) cols)
@@ -181,7 +159,6 @@ type state =
   ; attacker_id: DSA.public_key
   ; attacker_secret: DSA.private_key
   ; atv_rate: float
-  ; best_case_efficiency: float
   ; nodes: node array }
 
 let string_of_block b =
@@ -211,6 +188,7 @@ module Event = struct
 
   let eq : event t ref = ref empty
   let time = ref 0.
+  let now () = !time
   let schedule ?(delay = 0.) event = eq := schedule !eq (!time +. delay) event
 
   let next () =
@@ -220,6 +198,8 @@ module Event = struct
     (time', event)
 
   let empty () = !eq = empty
+  let time = ()
+  let eq = ()
 end
 
 let rec eclipse_random_node till nodes =
@@ -230,13 +210,12 @@ let rec eclipse_random_node till nodes =
   | None -> nodes.(i).eclipse <- Some {queue= Queue.create (); till}
 
 (* Get time of next ATV and assign random ATV recipient. *)
-let schedule_atv ~p ~s nth =
+let schedule_atv ~p ~s =
   let delay = draw Exponential (1. /. s.atv_rate)
   and node =
     if Random.float 1. <= p.alpha then 0
-    else Random.int (Array.length s.nodes - 1) + 1
-  in
-  Event.schedule ~delay (ATV {nth; node})
+    else Random.int (Array.length s.nodes - 1) + 1 in
+  Event.schedule ~delay (ATV {nth= s.atv_cnt; node})
 
 let handle_event ~p ~s =
   let handle_net = function
@@ -245,61 +224,47 @@ let handle_event ~p ~s =
         (* leader fails. *) ()
     | Broadcast {src; cnt; m} ->
         let lat =
-          match (m, p.vote_latency) with Vote _, Some l -> l | _ -> p.latency
-        in
+          match m with Vote _ -> p.delta_vote | Block _ -> p.delta_block in
         Array.iteri
           (fun rcv _ ->
             if rcv <> src then
-              let delay = if p.latency > 0. then draw p.lat_dist lat else 0. in
-              Event.schedule ~delay (Net (Deliver {src; rcv; cnt; m})) )
+              let delay = if lat > 0. then draw p.delta_dist lat else 0. in
+              Event.schedule ~delay (Net (Deliver {src; rcv; cnt; m})))
           s.nodes
     | Deliver x ->
         let n = s.nodes.(x.rcv) in
         let (module N) = n.m in
-        N.on_receive x.m
-  in
+        let _fresh = N.on_receive x.m in
+        () in
   let uneclipse n =
     match n.eclipse with
     | None -> ()
     | Some eclipse ->
         Queue.iter handle_net eclipse.queue ;
-        n.eclipse <- None
-  in
+        n.eclipse <- None in
   function
   | ATV {node; nth} ->
-      let (module N : Node) = s.nodes.(node).m in
-      if not s.shutdown then schedule_atv ~p ~s (nth + 1) ;
-      N.on_atv nth
+      if not s.shutdown then (
+        let (module N : Node) = s.nodes.(node).m in
+        s.atv_cnt <- s.atv_cnt + 1 ;
+        N.on_atv nth ;
+        schedule_atv ~p ~s )
   | Shutdown -> Array.iter uneclipse s.nodes
   | Net ev -> (
       let actor =
-        match ev with Broadcast {src; _} -> src | Deliver {rcv; _} -> rcv
-      in
+        match ev with Broadcast {src; _} -> src | Deliver {rcv; _} -> rcv in
       let n = s.nodes.(actor) in
       match n.eclipse with
       | None -> handle_net ev
       | Some eclipse ->
-          if !Event.time < eclipse.till then Queue.push ev eclipse.queue
+          let now = Event.now () in
+          if now < eclipse.till then Queue.push ev eclipse.queue
           else (
             uneclipse n ;
             handle_net ev ;
-            eclipse_random_node (!Event.time +. p.eclipse_time) s.nodes ) )
+            eclipse_random_node (now +. p.eclipse_time) s.nodes ) )
 
-let vote_threshold = Weight.max_weight
-
-(* Every 4th ATV is below the threshold. According to the max vote weight stats,
-   the probability that a vote with weight 4 * qthreshold is included is very
-   low. *)
-(* TODO: Derive threshold instead of looking at stats.
-   For qsize = 1, vthreshold = qthreshold
-       qsize = 2, every included vote is below 2*qthreshold
-       qsize = n, what is the probability that the maximal included
-                  vote is bigger than x when v_threshold = inf?
-
-   Goal: cut off votes which are unlikely to end up in a quorum in order to
-         safe bandwidth.
-*)
-let quorum_threshold = Weight.max_weight / 4
+let quorum_threshold = Weight.max_weight
 
 let broadcast =
   let message_cnt = ref 0 in
@@ -314,7 +279,6 @@ let broadcast =
 let spawn ~p id secret strategy =
   let module Config = struct
     let quorum_size = p.quorum_size
-    let vote_threshold = vote_threshold
     let quorum_threshold = quorum_threshold
     let my_id = id
     let my_secret = secret
@@ -412,12 +376,10 @@ let branch_analysis nodes =
   let open App in
   let f n =
     let (module N : Node) = n.m in
-    N.get_state ()
-  in
+    N.get_state () in
   let states = Array.map f nodes in
   let history state =
-    List.rev_map (fun c -> Hashtbl.hash c.hash) state.entries
-  in
+    List.rev_map (fun c -> Hashtbl.hash c.hash) state.entries in
   Array.map history states |> Array.to_seq |> StateTree.of_seq
   |> fun st -> StateTree.(branches st, depth st)
 
@@ -442,22 +404,19 @@ let max_vote_weight_stats (module N : Node) =
     (N.get_state ()).entries
     |> List.map (fun t ->
            List.(nth (rev t.quorum) 0)
-           |> fun (id, s) -> Weight.weigh (t.parent, id, s) |> float_of_int )
+           |> fun (id, s) -> Weight.weigh (t.parent, id, s) |> float_of_int)
   in
   let n, mean, max =
     let n, sum, max =
       List.fold_left
         (fun (n, sum, m) w -> (n + 1, w +. sum, max w m))
-        (0, 0., 0.) weights
-    in
-    (n, sum /. float_of_int n, max)
-  in
+        (0, 0., 0.) weights in
+    (n, sum /. float_of_int n, max) in
   let sd =
     let esum =
       List.fold_left (fun esum w -> ((w -. mean) ** 2.) +. esum) 0. weights
     in
-    sqrt (esum /. float_of_int n)
-  in
+    sqrt (esum /. float_of_int n) in
   (max, mean, sd)
 
 let get_height (module N : Node) = (N.get_state ()).height
@@ -467,8 +426,7 @@ let from_uneclipsed get nodes =
     match seq () with
     | Seq.Nil -> get nodes.(1).m
     | Cons (n, seq) -> (
-      match n.eclipse with None -> get n.m | Some _ -> f seq )
-  in
+      match n.eclipse with None -> get n.m | Some _ -> f seq ) in
   f Array.(sub nodes 1 (length nodes - 1) |> to_seq)
 
 let ratio a b = float_of_int a /. float_of_int b
@@ -476,13 +434,11 @@ let ratio a b = float_of_int a /. float_of_int b
 let result ~p ~s =
   let max_vote, max_vote_mean, max_vote_sd =
     from_uneclipsed max_vote_weight_stats s.nodes
-  and block_time = !Event.time /. float_of_int (s.height + 3)
+  and block_time = Event.now () /. float_of_int (s.height + 3)
   and efficiency =
     ratio ((s.height + 3) * p.quorum_size) s.atv_cnt
-    (* plus three because 3 blocks are not yet committed *)
-  in
-  let regularized_efficiency = efficiency /. s.best_case_efficiency
-  and attacker_block_cnt =
+    (* plus three because 3 blocks are not yet committed *) in
+  let attacker_block_cnt =
     from_uneclipsed (count_leadership s.attacker_id) s.nodes
   and attacker_vote_cnt = from_uneclipsed (count_votes s.attacker_id) s.nodes
   and block_cnt = s.height
@@ -499,32 +455,19 @@ let result ~p ~s =
   ; max_vote
   ; atv_cnt= s.atv_cnt
   ; efficiency
-  ; regularized_efficiency
   ; block_time }
 
 let init ~p =
-  (* We generate ATV of max size vote_threshold. A portion of ATVs will not be
-     included in quorums. Efficiency describes how much ATVs are lost due to
-     simulation.  Churn, leader failure and attacker behaviour are not
-     considered. From measurements we know that efficiency is described by
-     n / (n + 1) * (2 q_threshold / vote_threshold)
-  *)
-  let best_case_efficiency =
-    ratio quorum_threshold vote_threshold
-    *. 2.
-    *. ratio p.quorum_size (p.quorum_size + 1)
-  and attacker_id, attacker_secret = DSA.generate_id () in
-  let atv_rate = 1. *. float_of_int p.quorum_size /. best_case_efficiency
+  let attacker_id, attacker_secret = DSA.generate_id () in
+  let atv_rate = float_of_int p.quorum_size
   and nodes : node array =
     Array.init p.n_nodes (fun i ->
         let m =
           if i = 0 then spawn ~p attacker_id attacker_secret p.strategy
           else
             let id, secret = DSA.generate_id () in
-            spawn ~p id secret Naive
-        in
-        {m; eclipse= None} )
-  in
+            spawn ~p id secret Naive in
+        {m; eclipse= None}) in
   let () =
     (* eclipse first set of nodes *)
     let n = int_of_float (floor (float_of_int p.n_nodes *. p.churn)) in
@@ -533,17 +476,14 @@ let init ~p =
       if n = 0 then ()
       else (
         eclipse_random_node (float_of_int n *. d) nodes ;
-        eclipse (n - 1) )
-    in
-    eclipse n
-  in
+        eclipse (n - 1) ) in
+    eclipse n in
   { height= 0
   ; atv_cnt= 0
   ; shutdown= false
   ; attacker_id
   ; attacker_secret
   ; atv_rate
-  ; best_case_efficiency
   ; nodes }
 
 let event_filter verbosity = function
@@ -556,29 +496,20 @@ let simulate p =
   let s = init ~p in
   let log t e =
     if event_filter p.verbosity e then
-      Printf.printf "%14.5f    %s\n%!" t (string_of_event e)
-  and print_state =
-    if p.progress then fun () ->
-      let row = {p; r= result ~p ~s} in
-      Printf.eprintf "\r%s%!" (csv_row cols_progress row)
-    else fun () -> ()
-  in
+      Printf.printf "%14.5f    %s\n%!" t (string_of_event e) in
   if p.progress then Printf.eprintf "%s\n%!" (csv_head cols_progress) ;
-  schedule_atv ~p ~s 1 ;
+  schedule_atv ~p ~s ;
   while not (Event.empty ()) do
     let t, e = Event.next () in
-    handle_event ~p ~s e ;
-    log t e ;
-    match e with
-    | Net (Broadcast {m= Block _; _}) ->
-        s.height <- from_uneclipsed get_height s.nodes ;
-        if s.height >= p.n_blocks then (
-          s.shutdown <- true ;
-          Event.schedule Shutdown )
-    | ATV _ ->
-        s.atv_cnt <- s.atv_cnt + 1 ;
-        if s.atv_cnt mod (100000 / p.n_nodes) = 0 then print_state ()
-    | _ -> ()
+    let () =
+      match e with
+      | Net (Broadcast {m= Block _; src; _}) ->
+          s.height <- max (get_height s.nodes.(src).m) s.height ;
+          if s.height >= p.n_blocks && not s.shutdown then (
+            s.shutdown <- true ;
+            Event.schedule Shutdown )
+      | _ -> () in
+    handle_event ~p ~s e ; log t e
   done ;
   if p.progress then Printf.eprintf "\n%!" ;
   result ~p ~s
@@ -590,8 +521,7 @@ let term =
       print_endline (csv_head cols) ;
       exit 0 ) ;
     let row = {p; r= simulate p} in
-    print_endline (csv_row cols row)
-  in
+    print_endline (csv_row cols row) in
   Cmdliner.Term.(const f $ params_cmdliner_term ())
 
 let info = Cmdliner.(Term.info "sim" ~doc:"HotPow Simulator")

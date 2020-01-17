@@ -14,10 +14,20 @@
   (description "")
   (synopsis "HotPoW. Consensus Protocol & Simulation")
   (depends
-    (dune (and :build (>= 1.10)))
-    (ppx_deriving_cmdliner :build)
-    (ocamlformat :dev)
-    (odig :dev)
-    (merlin :dev)
-    (ocp-indent :dev)
-    (odoc :dev)))
+   (dune (and :build (>= 1.10)))
+   (base (< v0.13))
+   (sexplib :build)
+   (ezxmlm :build)
+   (ppx_sexp_conv :build)
+   (ppx_deriving_cmdliner :build)))
+
+(package
+  (name hotpow-devel)
+  (description "")
+  (synopsis "Development Tools")
+  (depends
+   (ocamlformat (and (< 0.13) (>= 0.12)))
+   (odig :build)
+   (merlin (>= 3))
+   (ocp-indent :build)
+   (odoc :build)))

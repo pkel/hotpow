@@ -3,6 +3,9 @@ lib: [
   "_build/install/default/lib/hotpow/dune-package"
   "_build/install/default/lib/hotpow/opam"
 ]
+bin: [
+  "_build/install/default/bin/hotpow_sim"
+]
 doc: [
   "_build/install/default/doc/hotpow/README"
 ]

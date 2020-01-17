@@ -43,13 +43,19 @@ module type Node = sig
   type message
   type state
 
-  val on_receive : message -> unit
+  val on_receive : message -> bool
+  (** Handle received message. Returns true iff message was fresh (Implies
+      message should be relayed and broadcast continued). *)
+
+  (* TODO: could also return something like Fresh | Old | Invalid. *)
 
   val work : unit -> unit
-  (** Search ATVs with proof-of-work *)
+  (** Search ATVs with proof-of-work. Found solutions are handed to [on_atv]. *)
 
   val on_atv : int -> unit
-  (** Handle the nth ATV. Will only work when PoW threshold is trivial. *)
+  (** Make us of an ATV. [on_atv sol] uses [sol] as solution in a vote. Only
+      works when [sol] satisfies threshold rule for currently preferred block.
+      *)
 
   val get_state : unit -> state
   (** Extract committed application state. *)
