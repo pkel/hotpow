@@ -4,10 +4,10 @@
 (generate_opam_files true)
 
 (license none)
-(maintainers "Patrik Keller, <patrik@keller-re.de>")
-(authors "Patrik Keller, <patrik@keller-re.de>")
-(homepage "https://arxiv.org/abs/1907.13531")
-(source (github pkel/hotpow))
+(maintainers "anonymous, <no@mail.provided>")
+(authors "anonymous, <no@mail.provided>")
+(homepage "no.site")
+(source (github n/a))
 
 (package
   (name hotpow)
