@@ -24,3 +24,10 @@ type 'a get_result = ('a, [`Key_not_found | `Type_mismatch]) result
 val get_string : string -> data -> string get_result
 val get_double : string -> data -> float get_result
 val get_boolean : string -> data -> bool get_result
+
+type 'a get_result' = ('a * data, [`Key_not_found | `Type_mismatch]) result
+(** data w/o the found field *)
+
+val get_string' : string -> data -> string get_result'
+val get_double' : string -> data -> float get_result'
+val get_boolean' : string -> data -> bool get_result'

@@ -78,7 +78,8 @@ module Network = struct
     ; mutable blocks_delivered: int
           (* number of fresh blocks delivered via this link *)
     ; mutable votes_delivered: int
-          (* number of fresh votes delivered via this link *) }
+          (* number of fresh votes delivered via this link *)
+    ; extra: Graphml.data }
 
   type msg = {src: address; rcv: address; e: edge_data; sent: float; m: message}
 
@@ -96,7 +97,8 @@ module Network = struct
     ; mutable mean_delay_block: AccMean.t
     ; mutable mean_delay_vote: AccMean.t
     ; mutable eclipse: eclipse option
-    ; mutable atv_count: int }
+    ; mutable atv_count: int
+    ; extra: Graphml.data }
 
   type t = (node_data, edge_data) Graph.t
   type node = node_data Graph.node
@@ -121,11 +123,13 @@ module Network = struct
       ; ("delta_block", rvar data.delta_block)
       ; ("blocks_delivered", int data.blocks_delivered)
       ; ("votes_delivered", int data.votes_delivered) ]
+      @ data.extra
     and n data =
       [ ("alpha", Double data.alpha); ("strategy", strategy data.strategy)
       ; ("atv_count", int data.atv_count)
       ; ("mean_delta_block", Double (AccMean.mean data.mean_delay_block))
-      ; ("mean_delta_vote", Double (AccMean.mean data.mean_delay_vote)) ] in
+      ; ("mean_delta_vote", Double (AccMean.mean data.mean_delay_vote)) ]
+      @ data.extra in
     Graph.to_graphml ~n ~e
 
   let of_graphml
@@ -133,44 +137,61 @@ module Network = struct
     let open Graphml in
     let strf = Printf.sprintf in
     let float ~default key data =
-      match get_double key data with
-      | Ok d -> d
+      match get_double' key !data with
+      | Ok (x, data') ->
+          data := data' ;
+          x
       | Error `Key_not_found -> default
       | Error `Type_mismatch ->
           failwith (strf "unexpected data type for field \"%s\"" key)
     and string ~default key data =
-      match get_string key data with
-      | Ok d -> d
+      match get_string' key !data with
+      | Ok (x, data') ->
+          data := data' ;
+          x
       | Error `Key_not_found -> default
       | Error `Type_mismatch ->
           failwith (strf "unexpected data type for field \"%s\"" key)
     and int ~default key data =
-      match get_double key data with
-      | Ok d -> Float.to_int d
+      match get_double' key !data with
+      | Ok (x, data') ->
+          data := data' ;
+          Float.to_int x
       | Error `Key_not_found -> default
       | Error `Type_mismatch ->
           failwith (strf "unexpected data type for field \"%s\"" key)
     and rvar ~default key data =
-      match List.assoc_opt key data with
-      | Some (String s) -> Rvar.(float_of_string s |> fail)
-      | Some (Double d) -> Rvar.constant d
+      match List.assoc_opt key !data with
+      | Some (String s) ->
+          data := List.remove_assoc key !data ;
+          Rvar.(float_of_string s |> fail)
+      | Some (Double d) ->
+          data := List.remove_assoc key !data ;
+          Rvar.constant d
       | None -> Rvar.constant default
       | _ -> failwith (strf "unexpected data type for field \"%s\"" key) in
     let n ~id data =
+      let data = ref data in
       let strategy =
-        string ~default:"naive" "strategy" data |> Strategy.of_string in
+        string ~default:"naive" "strategy" data |> Strategy.of_string
+      and alpha = float ~default:1. "alpha" data
+      and atv_count = int ~default:0 "atv_count" data in
       { strategy
       ; instance= Strategy.to_implementation strategy |> spawn ~addr:id
-      ; alpha= float ~default:1. "alpha" data
+      ; alpha
       ; eclipse= None
-      ; atv_count= int ~default:0 "atv_count" data
+      ; atv_count
       ; mean_delay_block= AccMean.empty
-      ; mean_delay_vote= AccMean.empty }
+      ; mean_delay_vote= AccMean.empty
+      ; extra= !data }
     and e data =
-      { delta_vote= rvar ~default:0. "delta_vote" data
-      ; delta_block= rvar ~default:0. "delta_block" data
-      ; blocks_delivered= int ~default:0 "blocks_delivered" data
-      ; votes_delivered= int ~default:0 "votes_delivered" data } in
+      let data = ref data in
+      let delta_vote = rvar ~default:0. "delta_vote" data
+      and delta_block = rvar ~default:0. "delta_block" data
+      and blocks_delivered = int ~default:0 "blocks_delivered" data
+      and votes_delivered = int ~default:0 "votes_delivered" data in
+      {delta_vote; delta_block; blocks_delivered; votes_delivered; extra= !data}
+    in
     Graph.of_graphml ~n ~e
 end
 
@@ -594,7 +615,8 @@ let term =
     let s = init ~p graph in
     let r = simulate ~p ~s in
     let xml =
-      let graph = Network.to_graphml s.net and data = graph_data ~r ~s ~p in
+      let graph = Network.to_graphml s.net
+      and data = graph_data ~r ~s ~p @ graph.data in
       Graphml.graph_to_xml {graph with data} |> raise_str_err
     and c = if p.result = "-" then stdout else open_out p.result
     and indent = if p.format then Some 2 else None in

@@ -230,3 +230,14 @@ let get f str data =
 let get_string = get string
 let get_double = get double
 let get_boolean = get boolean
+
+type 'a get_result' = ('a * data, [`Key_not_found | `Type_mismatch]) result
+
+let get' get str data =
+  match get str data with
+  | Ok x -> Ok (x, List.remove_assoc str data)
+  | Error e -> Error e
+
+let get_string' = get' get_string
+let get_double' = get' get_double
+let get_boolean' = get' get_boolean

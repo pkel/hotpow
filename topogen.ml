@@ -59,9 +59,13 @@ module Topo = struct
     let strategy x = String (Strategy.to_string x) in
     let e data =
       [ ("delta_vote", rvar data.delta_vote)
-      ; ("delta_block", rvar data.delta_block) ]
+      ; ("delta_block", rvar data.delta_block)
+      ; ("edge_dummy_1", String "preserve me")
+      ; ("edge_dummy_2", String "preserve me") ]
     and n data =
-      [("alpha", Double data.alpha); ("strategy", strategy data.strategy)] in
+      [ ("alpha", Double data.alpha); ("strategy", strategy data.strategy)
+      ; ("node_dummy_1", String "preserve me")
+      ; ("node_dummy_2", String "preserve me") ] in
     Graph.to_graphml ~n ~e
 
   let clique ~alpha ~delta_vote ~delta_block n =
@@ -123,7 +127,12 @@ let main ({delta_vote; delta_block; nodes; alpha; _} as p) =
     and delta_vote = Rvar.constant delta_vote in
     if p.clique then Topo.clique ~alpha ~delta_block ~delta_vote nodes
     else Topo.random ~alpha ~delta_block ~delta_vote nodes ~d:p.out_degree in
-  Topo.to_graphml topo |> Graphml.graph_to_xml
+  let graphml = Topo.to_graphml topo in
+  { graphml with
+    data=
+      [ ("graph_dummy_1", String "preserve me")
+      ; ("graph_dummy_2", String "preserve me") ] }
+  |> Graphml.graph_to_xml
   |> (function Ok x -> x | Error s -> failwith s)
   |> fun g ->
   Ezxmlm.to_output
