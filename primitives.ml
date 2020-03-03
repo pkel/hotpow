@@ -68,27 +68,15 @@ let message_to_string = function
   | Block b -> block_to_string b
   | Vote v -> vote_to_string v
 
-module App = struct
-  (** This dummy App keeps track of the block height and
-      records the history of quorums. *)
+type app_meta = {hash: block Link.t; parent: block Link.t; quorum: quorum}
 
-  type transition = payload
-  type entry = {quorum: quorum; parent: block Link.t; hash: block Link.t}
-  type state = {height: int; entries: entry list}
+module type Application =
+  Application with type meta = app_meta and type transition = unit
 
-  let initial : state = {height= 0; entries= []}
-
-  let apply ~hash ~quorum ~parent : transition -> state -> state =
-   fun _payload s ->
-    {height= s.height + 1; entries= {quorum; parent; hash} :: s.entries}
-
-  let propose () : transition = ()
-  let verify _ = true
-end
-
-module type Broadcast = Broadcast with type message := message
-module type Node = Node with type message := message and type state := App.state
+module type Broadcast = Broadcast with type message = message
+module type Node = Node with type message = message
 
 module type Implementation = sig
-  module Spawn (B : Broadcast) (C : Config) : Node
+  module Spawn (A : Application) (B : Broadcast) (C : Config) :
+    Node with type state = A.state
 end

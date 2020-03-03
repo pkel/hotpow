@@ -1,9 +1,10 @@
 module type Application = sig
   type transition
   type state
+  type meta (* protocol level info *)
 
   val initial : state
-  val apply : transition -> state -> state
+  val apply : meta -> transition -> state -> state
   val propose : unit -> transition
   val verify : transition -> bool
 end

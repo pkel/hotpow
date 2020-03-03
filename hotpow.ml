@@ -241,7 +241,7 @@ let genesis : block =
 
 (** Mutable state for the HotPoW protocol. Implements a receive window for
     blocks. Maintains Application state. *)
-module Chain : sig
+module Chain (App : Application) : sig
   type t
 
   val count_vote : t -> vote -> bool
@@ -273,7 +273,7 @@ end = struct
 
   open BlockStore
 
-  let leader_weight block =
+  let leader_weight (block : block) =
     let id, s = List.nth block.quorum 0 in
     Weight.weigh (block.parent, id, s)
 
@@ -327,7 +327,7 @@ end = struct
            let a : attached =
              { b
              ; height= to_.height + 1
-             ; s= App.apply ~hash ~parent ~quorum b.body to_.s
+             ; s= App.apply {hash; parent; quorum} b.body to_.s
              ; hash
              ; received_detached= [] } in
            add t.attached a ; update_head t a ; attach t a)
@@ -339,7 +339,7 @@ end = struct
         let a =
           { b
           ; height= e.height + 1
-          ; s= App.apply ~hash ~parent ~quorum b.body e.s
+          ; s= App.apply {hash; parent; quorum} b.body e.s
           ; hash
           ; received_detached= [] } in
         add t.attached a ; update_head t a ; attach t a
@@ -372,7 +372,12 @@ end = struct
     {attached; head; detached; votes; truth= head}
 end
 
-module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
+module Spawn (App : Application) (Broadcast : Broadcast) (Config : Config) :
+  Node with type state = App.state = struct
+  type message = Broadcast.message
+  type state = App.state
+
+  module Chain = Chain (App)
   open Config
 
   let config =

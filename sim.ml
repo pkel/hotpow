@@ -46,6 +46,28 @@ module Params = struct
       fail "leader-failure-rate" "must be in [0,1]"
 end
 
+module App = struct
+  (** This dummy App keeps track of the block height and
+      records the history of quorums. *)
+
+  type transition = payload
+  type meta = app_meta
+  type state = {height: int; entries: meta list}
+
+  let initial : state = {height= 0; entries= []}
+  let __apply_hook = ref (fun _ _ _ -> ())
+  let set_apply_hook f = __apply_hook := f
+
+  let apply ({hash; quorum; parent} as meta) payload s =
+    let () = !__apply_hook meta payload s in
+    {height= s.height + 1; entries= {quorum; parent; hash} :: s.entries}
+
+  let propose () : transition = ()
+  let verify _ = true
+end
+
+module type Node = Node with type state = App.state
+
 module AccMean : sig
   type t
 
@@ -65,16 +87,16 @@ end = struct
   let mean {sum; n} = if n > 0 then sum /. float_of_int n else Float.nan
 end
 
+(** {1} Simulated Network
+
+    Simulated network based on annotated {!Graph}.
+*)
 module Network = struct
   type address = int
-  (** {1} Simulated Network
-
-      Simulated network based on annotated {!Graph}.
-  *)
 
   type edge_data =
-    { delta_vote: float Rvar.t
-    ; delta_block: float Rvar.t
+    { delta_vote: float Rvar.t (* random transmission delay *)
+    ; delta_block: float Rvar.t (* random transmission delay *)
     ; mutable blocks_delivered: int
           (* number of fresh blocks delivered via this link *)
     ; mutable votes_delivered: int
@@ -91,13 +113,15 @@ module Network = struct
   type eclipse = {till: float; queue: event Queue.t}
 
   type node_data =
-    { alpha: float
-    ; strategy: Strategy.t
-    ; instance: (module Node)
-    ; mutable mean_delay_block: AccMean.t
-    ; mutable mean_delay_vote: AccMean.t
-    ; mutable eclipse: eclipse option
-    ; mutable atv_count: int
+    { alpha: float (* node's computational power *)
+    ; strategy: Strategy.t (* node's strategy *)
+    ; mutable mean_delay_block: AccMean.t (* mean block msg delay as receiver *)
+    ; mutable mean_delay_vote: AccMean.t (* mean vote msg delay as receiver *)
+    ; mutable atv_count: int (* number of ATVs assigned *)
+    ; mutable block_count: int (* number of committed block proposals *)
+    ; mutable vote_count: int (* number of committed votes *)
+    ; mutable eclipse: eclipse option (* used internally *)
+    ; instance: (module Node) (* used internally *)
     ; extra: Graphml.data }
 
   type t = (node_data, edge_data) Graph.t
@@ -126,9 +150,10 @@ module Network = struct
       @ data.extra
     and n data =
       [ ("alpha", Double data.alpha); ("strategy", strategy data.strategy)
-      ; ("atv_count", int data.atv_count)
-      ; ("mean_delta_block", Double (AccMean.mean data.mean_delay_block))
-      ; ("mean_delta_vote", Double (AccMean.mean data.mean_delay_vote)) ]
+      ; ("atv_count", int data.atv_count); ("block_count", int data.block_count)
+      ; ("vote_count", int data.vote_count)
+      ; ("mean_delay_block", Double (AccMean.mean data.mean_delay_block))
+      ; ("mean_delay_vote", Double (AccMean.mean data.mean_delay_vote)) ]
       @ data.extra in
     Graph.to_graphml ~n ~e
 
@@ -183,6 +208,8 @@ module Network = struct
       ; atv_count
       ; mean_delay_block= AccMean.empty
       ; mean_delay_vote= AccMean.empty
+      ; block_count= 0
+      ; vote_count= 0
       ; extra= !data }
     and e data =
       let data = ref data in
@@ -243,18 +270,17 @@ type simulation =
   ; mutable atv_count: int
   ; atv_rate: float
   ; atv_delta: float Rvar.t
-  ; atv_receiver: Network.node Rvar.t }
+  ; atv_receiver: Network.node Rvar.t
+  ; pkey_addr_lookup: Network.address DSA.Lookup.t }
 
 type result =
   { (* stats derived from state after simulation *)
     block_cnt: int
-  ; branches: int
-  ; branch_depth: int
-  ; max_vote: float
-  ; max_vote_mean: float
-  ; max_vote_sd: float
-  ; efficiency: float
-  ; block_time: float }
+  ; branches: int (* should be 1, otherwise there are inconsistent commits *)
+  ; branch_depth: int (* when did the first fork happen? *)
+  ; block_time: float
+        (* measured block time. Is ideally 1 (no delays, no churn, all honest*)
+  }
 
 let graph_data ~r ~s ~(p : Params.t) : Graphml.data =
   let open Graphml in
@@ -264,9 +290,7 @@ let graph_data ~r ~s ~(p : Params.t) : Graphml.data =
   ; ("leader_failure_rate", f p.leader_failure_rate)
   ; ("topology", string p.topology); ("n_nodes", i (Graph.cardinality s.net))
   ; ("n_branches", i r.branches); ("branch_depth", i r.branch_depth)
-  ; ("n_blocks", i r.block_cnt); ("max_vote", f r.max_vote)
-  ; ("max_vote_mean", f r.max_vote_mean); ("max_vote_sd", f r.max_vote_sd)
-  ; ("efficiency", f r.efficiency); ("atv_count", i s.atv_count)
+  ; ("n_blocks", i r.block_cnt); ("atv_count", i s.atv_count)
   ; ("block_time", f r.block_time) ]
 
 let graph ~p ~r ~s =
@@ -354,6 +378,8 @@ let broadcast =
   let open Network in
   fun node_addr ->
     let module B = struct
+      type message = Primitives.message
+
       let send m = Event.Queue.schedule (Net (Broadcast {m; src= node_addr}))
     end in
     (module B : Broadcast)
@@ -369,7 +395,7 @@ let spawn ~p ~addr implementation =
   end in
   let (module Broadcast) = broadcast addr
   and (module Implementation : Implementation) = implementation in
-  (module Implementation.Spawn (Broadcast) (Config) : Node)
+  (id, (module Implementation.Spawn (App) (Broadcast) (Config) : Node))
 
 module StateTree : sig
   type t
@@ -484,27 +510,6 @@ let count_votes id (module N : Node) =
     (N.get_state ()).entries ;
   !cnt
 
-let max_vote_weight_stats (module N : Node) =
-  let open App in
-  let weights =
-    (N.get_state ()).entries
-    |> List.map (fun t ->
-           List.(nth (rev t.quorum) 0)
-           |> fun (id, s) -> Weight.weigh (t.parent, id, s) |> float_of_int)
-  in
-  let n, mean, max =
-    let n, sum, max =
-      List.fold_left
-        (fun (n, sum, m) w -> (n + 1, w +. sum, max w m))
-        (0, 0., 0.) weights in
-    (n, sum /. float_of_int n, max) in
-  let sd =
-    let esum =
-      List.fold_left (fun esum w -> ((w -. mean) ** 2.) +. esum) 0. weights
-    in
-    sqrt (esum /. float_of_int n) in
-  (max, mean, sd)
-
 let get_height (module N : Node) = (N.get_state ()).height
 
 let from_uneclipsed get s =
@@ -520,30 +525,22 @@ let from_uneclipsed get s =
 
 let ratio a b = float_of_int a /. float_of_int b
 
-let result ~p ~s =
-  let open Params in
-  let max_vote, max_vote_mean, max_vote_sd =
-    from_uneclipsed max_vote_weight_stats s
-  and block_time = Event.Queue.now () /. float_of_int (s.height + 3)
-  and efficiency =
-    ratio ((s.height + 3) * p.quorum_size) s.atv_count
-    (* plus three because 3 blocks are not yet committed *) in
+let result ~s =
+  let block_time = Event.Queue.now () /. float_of_int (s.height + 3) in
   let block_cnt = s.height
   and branches, branch_depth = branch_analysis s.nodes in
-  { block_cnt
-  ; branches
-  ; branch_depth
-  ; max_vote_mean
-  ; max_vote_sd
-  ; max_vote
-  ; efficiency
-  ; block_time }
+  {block_cnt; branches; branch_depth; block_time}
 
 let raise_str_err = function Ok x -> x | Error str -> failwith str
 
 let init ~p graph =
+  let pkey_addr_lookup : Network.address DSA.Lookup.t ref =
+    ref (DSA.Lookup.create ()) in
   let open Params in
-  let spawn = spawn ~p in
+  let spawn ~addr impl =
+    let id, node = spawn ~p ~addr impl in
+    pkey_addr_lookup := DSA.Lookup.add id addr !pkey_addr_lookup ;
+    node in
   let net = Network.of_graphml ~spawn graph in
   let n_nodes = Graph.cardinality net in
   let atv_rate = float_of_int p.quorum_size
@@ -569,14 +566,41 @@ let init ~p graph =
         eclipse_random_node (float_of_int n *. d) nodes ;
         eclipse (n - 1) ) in
     eclipse n in
-  { height= 0
-  ; atv_count= 0
-  ; shutdown= false
-  ; atv_rate
-  ; atv_delta
-  ; atv_receiver
-  ; net
-  ; nodes }
+  (* initial state of simulator *)
+  let sim_state =
+    { height= 0
+    ; atv_count= 0
+    ; shutdown= false
+    ; atv_rate
+    ; atv_delta
+    ; atv_receiver
+    ; net
+    ; nodes
+    ; pkey_addr_lookup= !pkey_addr_lookup } in
+  (* hook into (every) nodes commit *)
+  let () =
+    App.set_apply_hook (fun meta _payload state ->
+        let height = state.height in
+        if height > sim_state.height then (
+          (* this is a new block *)
+          sim_state.height <- height ;
+          (* consider shutting down the simulation *)
+          if height >= p.n_blocks && not sim_state.shutdown then (
+            sim_state.shutdown <- true ;
+            Event.(Queue.schedule Shutdown) ) ;
+          (* count committed block and votes *)
+          let proposer =
+            nodes.(DSA.Lookup.get_exn !pkey_addr_lookup
+                     (List.nth meta.quorum 0 |> fst))
+              .data in
+          proposer.block_count <- proposer.block_count + 1 ;
+          List.iter
+            (fun (pkey, _) ->
+              let voter =
+                nodes.(DSA.Lookup.get_exn !pkey_addr_lookup pkey).data in
+              voter.vote_count <- voter.vote_count + 1)
+            meta.quorum )) in
+  sim_state
 
 let event_filter verbosity = function
   | Event.Net (Deliver _) when verbosity >= 3 -> true
@@ -591,17 +615,9 @@ let simulate ~p ~s =
   schedule_atv ~s () ;
   while not (Event.Queue.is_empty ()) do
     let t, e = Event.Queue.next () in
-    let () =
-      match e with
-      | Net (Broadcast {m= Block _; src}) ->
-          s.height <- max (get_height s.nodes.(src).data.instance) s.height ;
-          if s.height >= p.n_blocks && not s.shutdown then (
-            s.shutdown <- true ;
-            Event.(Queue.schedule Shutdown) )
-      | _ -> () in
     handle_event ~p ~s e ; log t e
   done ;
-  result ~p ~s
+  result ~s
 
 let term =
   let f p =
