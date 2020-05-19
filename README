@@ -1,4 +1,4 @@
-HotPoW protocol implementation and network simulation framework.
+B-Prot protocol implementation and network simulation framework.
 
 Reproducing the results
 -----------------------
@@ -31,7 +31,7 @@ will find the simulation program in the _build folder. You can best explore its
 capabilities by running
 
 make docker_build_static
-_build/static/bin/hotpow_sim --help
+_build/static/bin/bprot_sim --help
 
 
 Going deeper
@@ -48,8 +48,8 @@ feasible.
 
 We recommend reading the code in the following order:
 
-hotpow.ml
-  The HotPoW protocol
+bprot.ml
+  The B-Prot protocol
 
 common.ml
   Shared code that might also be used by the attacker

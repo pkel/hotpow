@@ -1,7 +1,7 @@
 (executables
  (names sim)
- (package hotpow)
- (public_names hotpow_sim)
+ (package bprot)
+ (public_names bprot_sim)
  (libraries cmdliner)
  (preprocess
   (pps ppx_deriving_cmdliner)))

@@ -21,8 +21,8 @@ type strategy = Naive | Censor
 let string_of_strategy = function Naive -> "naive" | Censor -> "censor"
 
 let implementation_of_strategy : strategy -> (module Implementation) = function
-  | Naive -> (module Hotpow)
-  | Censor -> (module Hotpow_censor)
+  | Naive -> (module Bprot)
+  | Censor -> (module Bprot_censor)
 
 let strategy_enum = List.map (fun s -> (string_of_strategy s, s)) [Naive; Censor]
 
@@ -524,5 +524,5 @@ let term =
     print_endline (csv_row cols row) in
   Cmdliner.Term.(const f $ params_cmdliner_term ())
 
-let info = Cmdliner.(Term.info "sim" ~doc:"HotPow Simulator")
+let info = Cmdliner.(Term.info "sim" ~doc:"B-Prot Simulator")
 let () = Cmdliner.(Term.exit @@ Term.eval (term, info))

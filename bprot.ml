@@ -241,7 +241,7 @@ let genesis : block =
   ; body= () (* This transition will not be executed *)
   ; signature= Obj.magic "signed by Satoshi" }
 
-(** Mutable state for the HotPoW protocol. Implements a receive window for
+(** Mutable state for the B-Prot protocol. Implements a receive window for
     blocks. Maintains Application state. *)
 module Chain : sig
   type t

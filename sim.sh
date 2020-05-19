@@ -10,7 +10,7 @@ exe=_build/default/sim.exe
 
 # Build static executable in container on machine w/o ocaml.
 if [ "1" = "$STATIC" ] || ! command -v opam > /dev/null ; then
-  exe=_build/static/bin/hotpow_sim
+  exe=_build/static/bin/bprot_sim
   if command -v podman > /dev/null ; then
     make docker_build_static 1>&2
   else

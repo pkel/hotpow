@@ -1,5 +1,5 @@
 (lang dune 1.10)
-(name hotpow)
+(name bprot)
 (using fmt 1.1)
 (generate_opam_files true)
 
@@ -10,9 +10,9 @@
 (source (github n/a))
 
 (package
-  (name hotpow)
+  (name bprot)
   (description "")
-  (synopsis "HotPoW. Consensus Protocol & Simulation")
+  (synopsis "B-Prot. Consensus Protocol & Simulation")
   (depends
    (dune (and :build (>= 1.10)))
    (base (< v0.13))
@@ -22,7 +22,7 @@
    (ppx_deriving_cmdliner :build)))
 
 (package
-  (name hotpow-devel)
+  (name bprot-devel)
   (description "")
   (synopsis "Development Tools")
   (depends

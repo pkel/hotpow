@@ -12,7 +12,7 @@ bug-reports: "https://github.com/n/a/issues"
 homepage: "no.site"
 license: "none"
 dev-repo: "git+https://github.com/n/a.git"
-synopsis: "HotPoW. Consensus Protocol & Simulation"
+synopsis: "B-Prot. Consensus Protocol & Simulation"
 description: ""
 depends: [
   "dune" {build & >= "1.10"}
