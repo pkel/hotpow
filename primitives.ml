@@ -46,6 +46,9 @@ module type Config = sig
   val quorum_threshold : int
   (** maximum weight of votes *)
 
+  val confirmations : int
+  (** number of confirmations until accepting the payload of a block *)
+
   val my_id : DSA.public_key
   (** The node's public identifier. *)
 

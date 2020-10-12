@@ -16,15 +16,23 @@ let draw d p =
   | Uniform -> p *. Random.float 2.
   | Exponential -> -1. *. p *. log (Random.float 1.)
 
-type strategy = Naive | Censor
+type strategy = Linear | Parallel | Hotpow | Hotpow_censor
 
-let string_of_strategy = function Naive -> "naive" | Censor -> "censor"
+let strategy_enum = [Linear; Parallel; Hotpow; Hotpow_censor]
+
+let string_of_strategy = function
+  | Linear -> "linear"
+  | Parallel -> "parallel"
+  | Hotpow -> "hotpow"
+  | Hotpow_censor -> "hotpow-censor"
 
 let implementation_of_strategy : strategy -> (module Implementation) = function
-  | Naive -> (module Hotpow)
-  | Censor -> (module Hotpow_censor)
+  | Linear -> failwith "linear strategy not implemented"
+  | Parallel -> (module Prot_parallel)
+  | Hotpow -> (module Hotpow)
+  | Hotpow_censor -> (module Hotpow_censor)
 
-let strategy_enum = List.map (fun s -> (string_of_strategy s, s)) [Naive; Censor]
+let strategy_enum = List.map (fun s -> (string_of_strategy s, s)) strategy_enum
 
 include struct
   [@@@ocaml.warning "-39"]
@@ -32,13 +40,18 @@ include struct
   type params =
     { n_blocks: int [@default 1024] [@aka ["b"]]
           (** Set amount of blocks to simulate. *)
-    ; quorum_size: int [@default 8] [@aka ["q"]]  (** Set the quorum size. *)
     ; n_nodes: int [@default 16] [@aka ["n"]]
-          (** Set number of nodes in network. *)
-    ; alpha: float [@default 1. /. 3.] [@aka ["a"]]
-          (** Set adversaries relative compute power. *)
-    ; strategy: strategy [@default Censor] [@aka ["s"]] [@enum strategy_enum]
+          (** Set number of nodes in the network. *)
+    ; protocol: strategy [@default Parallel] [@aka ["p"]] [@enum strategy_enum]
+          (** Set the protocol, i.e. the strategy used by honest nodes. *)
+    ; confirmations: int [@default 3] [@aka ["k"]]
+          (** Set the number of confirmations needed for accepting the payload of a block. Updates deeper than k are considered inconsistencies. *)
+    ; quorum_size: int [@default 8] [@aka ["q"]]
+          (** Set the quorum size. Does not apply to all protocols. *)
+    ; strategy: strategy [@default Parallel] [@aka ["s"]] [@enum strategy_enum]
           (** Set the attacker's strategy. *)
+    ; alpha: float [@default 1. /. 16.] [@aka ["a"]]
+          (** Set adversaries relative compute power. *)
     ; delta_dist: distribution
           [@default Exponential] [@aka ["d"]] [@enum distribution_enum]
           (** Set the distribution of propagation delays. *)
@@ -59,7 +72,7 @@ include struct
           (** Set the probability of a truthful leader failing to propose a
               block. We model leader failure by suppressing block proposals. *)
     ; header: bool  (** Print csv headers and exit. *)
-    ; progress: bool [@aka ["p"]]
+    ; progress: bool
           (** Print intermediate results to STDERR. Constructing the
               intermediate results creates a significant overhead. *)
     ; verbosity: int [@aka ["v"]] [@default 0]
@@ -107,11 +120,13 @@ let cols : row column list =
   and f = string_of_float
   and s = string_of_strategy
   and d = string_of_distribution in
-  [ {title= "p.strategy"; f= (fun x -> s x.p.strategy)}
+  [ {title= "p.protocol"; f= (fun x -> s x.p.protocol)}
+  ; {title= "p.confirmations"; f= (fun x -> i x.p.confirmations)}
+  ; {title= "p.quorum_size"; f= (fun x -> i x.p.quorum_size)}
   ; {title= "p.n_blocks"; f= (fun x -> i x.p.n_blocks)}
   ; {title= "p.n_nodes"; f= (fun x -> i x.p.n_nodes)}
-  ; {title= "p.quorum_size"; f= (fun x -> i x.p.quorum_size)}
   ; {title= "p.alpha"; f= (fun x -> f x.p.alpha)}
+  ; {title= "p.strategy"; f= (fun x -> s x.p.strategy)}
   ; {title= "p.delta_dist"; f= (fun x -> d x.p.delta_dist)}
   ; {title= "p.delta_vote"; f= (fun x -> f x.p.delta_vote)}
   ; {title= "p.delta_block"; f= (fun x -> f x.p.delta_block)}
@@ -280,6 +295,7 @@ let spawn ~p id secret strategy =
   let module Config = struct
     let quorum_size = p.quorum_size
     let quorum_threshold = quorum_threshold
+    let confirmations = p.confirmations
     let my_id = id
     let my_secret = secret
   end in
@@ -466,7 +482,7 @@ let init ~p =
           if i = 0 then spawn ~p attacker_id attacker_secret p.strategy
           else
             let id, secret = DSA.generate_id () in
-            spawn ~p id secret Naive in
+            spawn ~p id secret p.protocol in
         {m; eclipse= None}) in
   let () =
     (* eclipse first set of nodes *)
