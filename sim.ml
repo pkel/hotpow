@@ -16,21 +16,19 @@ let draw d p =
   | Uniform -> p *. Random.float 2.
   | Exponential -> -1. *. p *. log (Random.float 1.)
 
-type strategy = Linear | Parallel | Hotpow | Hotpow_censor
+type strategy = Parallel | Hotpow | Hotpow_censor
 
-let strategy_enum = [Linear; Parallel; Hotpow; Hotpow_censor]
+let strategy_enum = [Parallel; Hotpow; Hotpow_censor]
 
 let string_of_strategy = function
-  | Linear -> "linear"
   | Parallel -> "parallel"
   | Hotpow -> "hotpow"
   | Hotpow_censor -> "hotpow-censor"
 
 let implementation_of_strategy : strategy -> (module Implementation) = function
-  | Linear -> failwith "linear strategy not implemented"
   | Parallel -> (module Prot_parallel)
-  | Hotpow -> (module Hotpow)
-  | Hotpow_censor -> (module Hotpow_censor)
+  | Hotpow -> (module Prot_commit)
+  | Hotpow_censor -> (module Attack_commit_censor)
 
 let strategy_enum = List.map (fun s -> (string_of_strategy s, s)) strategy_enum
 

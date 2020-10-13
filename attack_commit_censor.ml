@@ -4,7 +4,7 @@
    as possible. He proposes complete blocks but withholds all of his votes.  *)
 
 open Primitives
-open Hotpow
+open Prot_commit
 
 module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
   open Config

@@ -241,8 +241,11 @@ let genesis : block =
   ; body= () (* This transition will not be executed *)
   ; signature= Obj.magic "signed by Satoshi" }
 
-(** Mutable state for the HotPoW protocol. Implements a receive window for
-    blocks. Maintains Application state. *)
+(** Mutable state for the parallel PoW protocol. Implements a receive window for
+    blocks. Maintains application state.
+    TODO: abstract commit rule and reuse this for HotPoW.
+    Maybe have one module that implements block tree and receive window.
+*)
 module Chain : sig
   type t
 
