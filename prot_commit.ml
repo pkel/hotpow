@@ -155,7 +155,7 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
     | Some quorum ->
         assert (valid_quorum ~config lnk quorum) ;
         let block =
-          let body = App.propose () in
+          let body = App.propose ~time:(Config.now ()) in
           block ~lnk ~quorum ~body my_secret in
         assert (valid_block ~config block) ;
         let before = Chain.head_lnk chain and hash = Link.hash block in

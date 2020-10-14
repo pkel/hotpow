@@ -31,7 +31,7 @@ type block =
 
 and block_sig = (block Link.t * quorum * payload) DSA.signature
 
-and payload = unit
+and payload = {time: float}
 
 let block ~quorum ~lnk ~body secret =
   { quorum
@@ -54,6 +54,8 @@ module type Config = sig
 
   val my_secret : DSA.private_key
   (** The private key corresponding to my_id *)
+
+  val now : unit -> float
 end
 
 type quorum_config = {size: int; threshold: int}
@@ -76,16 +78,24 @@ module App = struct
       records the history of quorums. *)
 
   type transition = payload
-  type entry = {quorum: quorum; parent: block Link.t; hash: block Link.t}
-  type state = {height: int; entries: entry list}
 
-  let initial : state = {height= 0; entries= []}
+  type entry =
+    { height: int
+    ; quorum: quorum
+    ; parent: block Link.t
+    ; hash: block Link.t
+    ; payload: transition }
+
+  type state = entry list
+
+  let initial : state = []
 
   let apply ~hash ~quorum ~parent : transition -> state -> state =
-   fun _payload s ->
-    {height= s.height + 1; entries= {quorum; parent; hash} :: s.entries}
+   fun payload s ->
+    let height = match s with [] -> 0 | {height; _} :: _ -> height + 1 in
+    {height; quorum; parent; hash; payload} :: s
 
-  let propose () : transition = ()
+  let propose ~time : transition = {time}
   let verify _ = true
 end
 

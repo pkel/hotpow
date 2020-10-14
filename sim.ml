@@ -73,6 +73,8 @@ include struct
     ; progress: bool
           (** Print intermediate results to STDERR. Constructing the
               intermediate results creates a significant overhead. *)
+    ; block_file: string option [@aka ["o"]]
+          (** Write per-block measurements to the given file. Includes only the longest chain up to the confirmed height (see --confirmations) *)
     ; verbosity: int [@aka ["v"]] [@default 0]
           (** Print events. > 0 : Message send; > 1 : ATV assignments;
               > 2 : Message delivery *)
@@ -86,6 +88,7 @@ let check_params p =
     exit 1 in
   if p.n_nodes < 2 then fail "n-blocks" "must be >= 2" ;
   if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
+  if p.confirmations < 1 then fail "confirmations" "must be >= 1" ;
   if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
   if p.alpha < 0. || p.alpha > 1. then fail "alpha" "must be in [0,1]" ;
   if p.delta_vote < 0. then fail "delta-vote" "must be >= 0" ;
@@ -108,9 +111,15 @@ type result =
   ; max_vote_mean: float
   ; max_vote_sd: float
   ; efficiency: float
-  ; block_time: float }
+  ; block_time: float
+  ; chain: App.entry list
+  }
 
 type 'a column = {title: string; f: 'a -> string}
+
+let csv_head cols = String.concat "," (List.map (fun x -> x.title) cols)
+let csv_row cols row = String.concat "," (List.map (fun x -> x.f row) cols)
+
 type row = {p: params; r: result}
 
 let cols : row column list =
@@ -154,8 +163,10 @@ let cols_progress : row column list =
   ; {title= "r.attacker_vote_share"; f= (fun x -> f x.r.attacker_vote_share)}
   ; {title= "r.block_time"; f= (fun x -> f x.r.block_time)} ]
 
-let csv_head cols = String.concat "," (List.map (fun x -> x.title) cols)
-let csv_row cols row = String.concat "," (List.map (fun x -> x.f row) cols)
+let block_cols : App.entry column list =
+  let i = string_of_int and f = string_of_float in
+  [ {title= "height"; f= (fun x -> i x.height)}
+  ; {title= "time"; f= (fun x -> f x.payload.time)} ]
 
 type net_event =
   | Broadcast of {src: int; cnt: int; m: message}
@@ -296,6 +307,7 @@ let spawn ~p id secret strategy =
     let confirmations = p.confirmations
     let my_id = id
     let my_secret = secret
+    let now = Event.now
   end in
   let (module Broadcast) = broadcast DSA.(int_of_id id)
   and (module Implementation) = implementation_of_strategy strategy in
@@ -392,8 +404,7 @@ let branch_analysis nodes =
     let (module N : Node) = n.m in
     N.get_state () in
   let states = Array.map f nodes in
-  let history state =
-    List.rev_map (fun c -> Hashtbl.hash c.hash) state.entries in
+  let history state = List.rev_map (fun c -> Hashtbl.hash c.hash) state in
   Array.map history states |> Array.to_seq |> StateTree.of_seq
   |> fun st -> StateTree.(branches st, depth st)
 
@@ -401,7 +412,7 @@ let count_leadership id (module N : Node) =
   let open App in
   let cnt = ref 0 in
   let check_lead t = fst (List.nth t.quorum 0) = id in
-  List.iter (fun q -> if check_lead q then incr cnt) (N.get_state ()).entries ;
+  List.iter (fun q -> if check_lead q then incr cnt) (N.get_state ()) ;
   !cnt
 
 let count_votes id (module N : Node) =
@@ -409,13 +420,13 @@ let count_votes id (module N : Node) =
   let cnt = ref 0 in
   List.iter
     (fun t -> List.iter (fun v -> if fst v = id then incr cnt) t.quorum)
-    (N.get_state ()).entries ;
+    (N.get_state ()) ;
   !cnt
 
 let max_vote_weight_stats (module N : Node) =
   let open App in
   let weights =
-    (N.get_state ()).entries
+    N.get_state ()
     |> List.map (fun t ->
            List.(nth (rev t.quorum) 0)
            |> fun (id, s) -> Weight.weigh (t.parent, id, s) |> float_of_int)
@@ -433,7 +444,11 @@ let max_vote_weight_stats (module N : Node) =
     sqrt (esum /. float_of_int n) in
   (max, mean, sd)
 
-let get_height (module N : Node) = (N.get_state ()).height
+let get_height (module N : Node) =
+  match N.get_state () with [] -> 0 | {height; _} :: _ -> height
+
+let get_chain (module N : Node) =
+  List.rev (N.get_state ())
 
 let from_uneclipsed get nodes =
   let rec f seq =
@@ -469,7 +484,9 @@ let result ~p ~s =
   ; max_vote
   ; atv_cnt= s.atv_cnt
   ; efficiency
-  ; block_time }
+  ; block_time
+  ; chain = from_uneclipsed get_chain s.nodes
+  }
 
 let init ~p =
   let attacker_id, attacker_secret = DSA.generate_id () in
@@ -534,7 +551,16 @@ let term =
     if p.header then (
       print_endline (csv_head cols) ;
       exit 0 ) ;
-    let row = {p; r= simulate p} in
+    let r = simulate p in
+    let () = match p.block_file with
+      | Some fname ->
+        let f = open_out fname in
+        Printf.fprintf f "%s\n" (csv_head block_cols);
+        List.iter (fun b -> Printf.fprintf f "%s\n" (csv_row block_cols b)) r.chain;
+        close_out f
+      | None -> ()
+    in
+    let row = {p; r} in
     print_endline (csv_row cols row) in
   Cmdliner.Term.(const f $ params_cmdliner_term ())
 

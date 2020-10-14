@@ -238,7 +238,7 @@ let genesis : block =
   and quorum = [(Obj.magic 0, 0)] in
   { parent
   ; quorum
-  ; body= () (* This transition will not be executed *)
+  ; body= {time= 0.} (* This transition will not be executed *)
   ; signature= Obj.magic "signed by Satoshi" }
 
 (** Mutable state for the parallel PoW protocol. Implements a receive window for
@@ -300,12 +300,12 @@ end = struct
       (* Update head and application state *)
       t.head <- candidate ;
       let old_truth = t.truth in
-      match parent t.confirmations t.head with
-      | new_truth ->
-          if old_truth <> new_truth then failwith "inconsistency detected" ;
-          (* TODO: count inconsistencies *)
-          t.truth <- new_truth
-      | exception Not_found -> () )
+      try
+        let new_truth = parent t.confirmations t.head in
+        if old_truth <> parent 1 new_truth then failwith "inconsistency detected" ;
+        (* TODO: count inconsistencies *)
+        t.truth <- new_truth
+      with Not_found -> () )
 
   let rec attach t (to_ : attached) =
     successors t.detached to_.hash
@@ -382,7 +382,7 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
     | Some quorum ->
         assert (valid_quorum ~config lnk quorum) ;
         let block =
-          let body = App.propose () in
+          let body = App.propose ~time:(Config.now ()) in
           block ~lnk ~quorum ~body my_secret in
         assert (valid_block ~config block) ;
         let before = Chain.head_lnk chain and hash = Link.hash block in
