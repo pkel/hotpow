@@ -299,10 +299,19 @@ end = struct
       let rec parent n a = if n < 1 then a else parent (n - 1) (parent' a) in
       (* Update head and application state *)
       t.head <- candidate ;
-      let old_truth = t.truth in
       try
         let new_truth = parent t.confirmations t.head in
-        if old_truth <> parent 1 new_truth then failwith "inconsistency detected" ;
+        if
+          not
+            Link.(
+              equal t.truth.hash (parent 1 new_truth).hash
+              || equal t.truth.hash new_truth.hash)
+        then
+          Printf.eprintf
+            "WARNING: inconsistency detected (head.height: %i <- %i) \
+             (truth.height: %i <- %i)\n\
+             %!"
+            candidate.height t.head.height t.truth.height new_truth.height ;
         (* TODO: count inconsistencies *)
         t.truth <- new_truth
       with Not_found -> () )
@@ -322,6 +331,10 @@ end = struct
              ; hash
              ; received_detached= [] } in
            add t.attached a ; update_head t a ; attach t a)
+
+  (* TODO: rewrite add/attach logic such that incoming blocks are added to
+   * detached block store on income. Then attach.
+   * Other idea: share block store for attached/detached blocks. *)
 
   let add_block t hash (b : block) =
     match get t.attached b.parent with

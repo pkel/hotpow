@@ -4,7 +4,7 @@ open Intf
 module Link : Hash = struct
   type 'a t = int
 
-  let hash = Hashtbl.hash
+  let hash x = Hashtbl.seeded_hash_param 255 255 42 x
   let equal = ( = )
   let to_string = Printf.sprintf "%x"
 end

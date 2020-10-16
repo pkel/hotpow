@@ -44,8 +44,7 @@ include struct
           (** Set the protocol, i.e. the strategy used by honest nodes. *)
     ; confirmations: int [@default 3] [@aka ["k"]]
           (** Set the number of confirmations needed for accepting the payload of a block. Updates deeper than k are considered inconsistencies. *)
-    ; quorum_size: int [@default 8] [@aka ["q"]]
-          (** Set the quorum size. Does not apply to all protocols. *)
+    ; quorum_size: int [@default 8] [@aka ["q"]]  (** Set the quorum size. *)
     ; strategy: strategy [@default Parallel] [@aka ["s"]] [@enum strategy_enum]
           (** Set the attacker's strategy. *)
     ; alpha: float [@default 1. /. 16.] [@aka ["a"]]
@@ -112,8 +111,7 @@ type result =
   ; max_vote_sd: float
   ; efficiency: float
   ; block_time: float
-  ; chain: App.entry list
-  }
+  ; chain: App.entry list }
 
 type 'a column = {title: string; f: 'a -> string}
 
@@ -447,8 +445,7 @@ let max_vote_weight_stats (module N : Node) =
 let get_height (module N : Node) =
   match N.get_state () with [] -> 0 | {height; _} :: _ -> height
 
-let get_chain (module N : Node) =
-  List.rev (N.get_state ())
+let get_chain (module N : Node) = List.rev (N.get_state ())
 
 let from_uneclipsed get nodes =
   let rec f seq =
@@ -485,8 +482,7 @@ let result ~p ~s =
   ; atv_cnt= s.atv_cnt
   ; efficiency
   ; block_time
-  ; chain = from_uneclipsed get_chain s.nodes
-  }
+  ; chain= from_uneclipsed get_chain s.nodes }
 
 let init ~p =
   let attacker_id, attacker_secret = DSA.generate_id () in
@@ -552,14 +548,16 @@ let term =
       print_endline (csv_head cols) ;
       exit 0 ) ;
     let r = simulate p in
-    let () = match p.block_file with
+    let () =
+      match p.block_file with
       | Some fname ->
-        let f = open_out fname in
-        Printf.fprintf f "%s\n" (csv_head block_cols);
-        List.iter (fun b -> Printf.fprintf f "%s\n" (csv_row block_cols b)) r.chain;
-        close_out f
-      | None -> ()
-    in
+          let f = open_out fname in
+          Printf.fprintf f "%s\n" (csv_head block_cols) ;
+          List.iter
+            (fun b -> Printf.fprintf f "%s\n" (csv_row block_cols b))
+            r.chain ;
+          close_out f
+      | None -> () in
     let row = {p; r} in
     print_endline (csv_row cols row) in
   Cmdliner.Term.(const f $ params_cmdliner_term ())
