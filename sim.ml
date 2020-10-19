@@ -2,7 +2,7 @@ let () = Random.self_init ()
 
 open Primitives
 
-type distribution = Exponential | Uniform
+type distribution = Exponential | Uniform [@@deriving hash]
 
 let string_of_distribution = function
   | Exponential -> "exponential"
@@ -16,7 +16,7 @@ let draw d p =
   | Uniform -> p *. Random.float 2.
   | Exponential -> -1. *. p *. log (Random.float 1.)
 
-type strategy = Parallel | Hotpow | Hotpow_censor
+type strategy = Parallel | Hotpow | Hotpow_censor [@@deriving hash]
 
 let strategy_enum = [Parallel; Hotpow; Hotpow_censor]
 
@@ -34,6 +34,7 @@ let strategy_enum = List.map (fun s -> (string_of_strategy s, s)) strategy_enum
 
 include struct
   [@@@ocaml.warning "-39"]
+  open Base
 
   type params =
     { n_blocks: int [@default 1024] [@aka ["b"]]
@@ -68,7 +69,10 @@ include struct
     ; leader_failure_rate: float [@default 0.] [@aka ["f"]]
           (** Set the probability of a truthful leader failing to propose a
               block. We model leader failure by suppressing block proposals. *)
-    ; header: bool  (** Print csv headers and exit. *)
+    } [@@deriving cmdliner, hash]
+
+  type io_params =
+    { header: bool  (** Print csv headers and exit. *)
     ; progress: bool
           (** Print intermediate results to STDERR. Constructing the
               intermediate results creates a significant overhead. *)
@@ -77,8 +81,7 @@ include struct
     ; verbosity: int [@aka ["v"]] [@default 0]
           (** Print events. > 0 : Message send; > 1 : ATV assignments;
               > 2 : Message delivery *)
-    }
-  [@@deriving cmdliner]
+    } [@@deriving cmdliner]
 end
 
 let check_params p =
@@ -125,7 +128,8 @@ let cols : row column list =
   and f = string_of_float
   and s = string_of_strategy
   and d = string_of_distribution in
-  [ {title= "p.protocol"; f= (fun x -> s x.p.protocol)}
+  [ {title= "id" ; f=(fun x -> hash_params x.p |> Printf.sprintf "%08x")}
+  ; {title= "p.protocol"; f= (fun x -> s x.p.protocol)}
   ; {title= "p.confirmations"; f= (fun x -> i x.p.confirmations)}
   ; {title= "p.quorum_size"; f= (fun x -> i x.p.quorum_size)}
   ; {title= "p.n_blocks"; f= (fun x -> i x.p.n_blocks)}
@@ -519,12 +523,12 @@ let event_filter verbosity = function
   | Net (Broadcast _) when verbosity >= 1 -> true
   | _ -> false
 
-let simulate p =
+let simulate io p =
   let s = init ~p in
   let log t e =
-    if event_filter p.verbosity e then
+    if event_filter io.verbosity e then
       Printf.printf "%14.5f    %s\n%!" t (string_of_event e) in
-  if p.progress then Printf.eprintf "%s\n%!" (csv_head cols_progress) ;
+  if io.progress then Printf.eprintf "%s\n%!" (csv_head cols_progress) ;
   schedule_atv ~p ~s ;
   while not (Event.empty ()) do
     let t, e = Event.next () in
@@ -538,18 +542,18 @@ let simulate p =
       | _ -> () in
     handle_event ~p ~s e ; log t e
   done ;
-  if p.progress then Printf.eprintf "\n%!" ;
+  if io.progress then Printf.eprintf "\n%!" ;
   result ~p ~s
 
 let term =
-  let f p =
+  let f io p =
     check_params p ;
-    if p.header then (
+    if io.header then (
       print_endline (csv_head cols) ;
       exit 0 ) ;
-    let r = simulate p in
+    let r = simulate io p in
     let () =
-      match p.block_file with
+      match io.block_file with
       | Some fname ->
           let f = open_out fname in
           Printf.fprintf f "%s\n" (csv_head block_cols) ;
@@ -560,7 +564,7 @@ let term =
       | None -> () in
     let row = {p; r} in
     print_endline (csv_row cols row) in
-  Cmdliner.Term.(const f $ params_cmdliner_term ())
+  Cmdliner.Term.(const f $ io_params_cmdliner_term () $ params_cmdliner_term ())
 
 let info = Cmdliner.(Term.info "sim" ~doc:"HotPow Simulator")
 let () = Cmdliner.(Term.exit @@ Term.eval (term, info))
