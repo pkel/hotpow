@@ -11,5 +11,7 @@ let generate_id () =
   let nr = pre_inc cnt in
   (nr, nr)
 
+let id_of_int i = (i, i)
+
 let string_of_id = string_of_int
 let int_of_id x = x

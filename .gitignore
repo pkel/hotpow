@@ -2,4 +2,4 @@ _opam
 _build
 .merlin
 *.install
-*.csv
+output

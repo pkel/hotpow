@@ -4,7 +4,8 @@ lib: [
   "_build/install/default/lib/hotpow/opam"
 ]
 bin: [
-  "_build/install/default/bin/hotpow_sim"
+  "_build/install/default/bin/many"
+  "_build/install/default/bin/powsim"
 ]
 doc: [
   "_build/install/default/doc/hotpow/README"

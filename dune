@@ -1,7 +1,9 @@
+(data_only_dirs output)
+
 (executables
- (names sim)
- (package hotpow)
- (public_names hotpow_sim)
- (libraries cmdliner)
- (preprocess
-  (pps ppx_deriving_cmdliner ppx_hash)))
+  (names sim_single sim_many)
+  (package hotpow)
+  (public_names powsim many)
+  (libraries cmdliner stdio)
+  (preprocess
+    (pps ppx_deriving_cmdliner ppx_hash ppx_deriving.show)))

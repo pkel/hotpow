@@ -18,6 +18,7 @@ module type DSA = sig
   val generate_id : unit -> public_key * private_key
   val string_of_id : public_key -> string
   val int_of_id : public_key -> int
+  val id_of_int : int -> public_key * private_key
 end
 
 module type Hash = sig

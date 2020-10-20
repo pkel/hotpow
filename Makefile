@@ -4,9 +4,10 @@ docker=podman
 
 opam_container=ocaml/opam2:alpine-3.10-ocaml-4.09
 
-sim: export OCAMLRUNPARAM=b
-sim: build
-	dune exec hotpow_sim -- -o blocks.csv
+single: export OCAMLRUNPARAM=b
+single: build
+	mkdir -p output
+	dune exec powsim -- -o output/blocks.csv
 
 static: export OCAMLRUNPARAM=b
 static: docker_build_static

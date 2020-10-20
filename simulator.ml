@@ -2,7 +2,7 @@ let () = Random.self_init ()
 
 open Primitives
 
-type distribution = Exponential | Uniform [@@deriving hash]
+type distribution = Exponential | Uniform [@@deriving hash, show { with_path = false }]
 
 let string_of_distribution = function
   | Exponential -> "exponential"
@@ -16,7 +16,7 @@ let draw d p =
   | Uniform -> p *. Random.float 2.
   | Exponential -> -1. *. p *. log (Random.float 1.)
 
-type strategy = Parallel | Hotpow | Hotpow_censor [@@deriving hash]
+type strategy = Parallel | Hotpow | Hotpow_censor [@@deriving hash, show { with_path = false }]
 
 let strategy_enum = [Parallel; Hotpow; Hotpow_censor]
 
@@ -69,15 +69,12 @@ include struct
     ; leader_failure_rate: float [@default 0.] [@aka ["f"]]
           (** Set the probability of a truthful leader failing to propose a
               block. We model leader failure by suppressing block proposals. *)
-    } [@@deriving cmdliner, hash]
+    } [@@deriving cmdliner, hash, show { with_path = false }]
 
   type io_params =
-    { header: bool  (** Print csv headers and exit. *)
-    ; progress: bool
+    { progress: bool
           (** Print intermediate results to STDERR. Constructing the
               intermediate results creates a significant overhead. *)
-    ; block_file: string option [@aka ["o"]]
-          (** Write per-block measurements to the given file. Includes only the longest chain up to the confirmed height (see --confirmations) *)
     ; verbosity: int [@aka ["v"]] [@default 0]
           (** Print events. > 0 : Message send; > 1 : ATV assignments;
               > 2 : Message delivery *)
@@ -86,19 +83,23 @@ end
 
 let check_params p =
   let fail p msg =
-    Printf.eprintf "Invalid parameter --%s: %s\n%!" p msg ;
-    exit 1 in
-  if p.n_nodes < 2 then fail "n-blocks" "must be >= 2" ;
-  if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
-  if p.confirmations < 1 then fail "confirmations" "must be >= 1" ;
-  if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
-  if p.alpha < 0. || p.alpha > 1. then fail "alpha" "must be in [0,1]" ;
-  if p.delta_vote < 0. then fail "delta-vote" "must be >= 0" ;
-  if p.delta_block < 0. then fail "delta-block" "must be >= 0" ;
-  if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
-  if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
-  if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
-    fail "leader-failure-rate" "must be in [0,1]"
+    let m = Printf.sprintf "%s %s" p msg in
+    failwith m
+  in
+  try
+    if p.n_nodes < 2 then fail "n-blocks" "must be >= 2" ;
+    if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
+    if p.confirmations < 1 then fail "confirmations" "must be >= 1" ;
+    if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
+    if p.alpha < 0. || p.alpha > 1. then fail "alpha" "must be in [0,1]" ;
+    if p.delta_vote < 0. then fail "delta-vote" "must be >= 0" ;
+    if p.delta_block < 0. then fail "delta-block" "must be >= 0" ;
+    if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
+    if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
+    if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
+      fail "leader-failure-rate" "must be in [0,1]";
+    Ok p
+  with Failure m -> Error m
 
 type result =
   { block_cnt: int
@@ -224,6 +225,10 @@ module Event = struct
     (time', event)
 
   let empty () = !eq = empty
+
+  (* TODO. Use one clock per simulation for parallel execution *)
+  let reset () = time := 0.
+
   let time = ()
   let eq = ()
 end
@@ -489,14 +494,14 @@ let result ~p ~s =
   ; chain= from_uneclipsed get_chain s.nodes }
 
 let init ~p =
-  let attacker_id, attacker_secret = DSA.generate_id () in
+  let attacker_id, attacker_secret = DSA.id_of_int 0 in
   let atv_rate = float_of_int p.quorum_size
   and nodes : node array =
     Array.init p.n_nodes (fun i ->
         let m =
           if i = 0 then spawn ~p attacker_id attacker_secret p.strategy
           else
-            let id, secret = DSA.generate_id () in
+            let id, secret = DSA.id_of_int i in
             spawn ~p id secret p.protocol in
         {m; eclipse= None}) in
   let () =
@@ -524,6 +529,7 @@ let event_filter verbosity = function
   | _ -> false
 
 let simulate io p =
+  let () = Event.reset () in
   let s = init ~p in
   let log t e =
     if event_filter io.verbosity e then
@@ -544,27 +550,3 @@ let simulate io p =
   done ;
   if io.progress then Printf.eprintf "\n%!" ;
   result ~p ~s
-
-let term =
-  let f io p =
-    check_params p ;
-    if io.header then (
-      print_endline (csv_head cols) ;
-      exit 0 ) ;
-    let r = simulate io p in
-    let () =
-      match io.block_file with
-      | Some fname ->
-          let f = open_out fname in
-          Printf.fprintf f "%s\n" (csv_head block_cols) ;
-          List.iter
-            (fun b -> Printf.fprintf f "%s\n" (csv_row block_cols b))
-            r.chain ;
-          close_out f
-      | None -> () in
-    let row = {p; r} in
-    print_endline (csv_row cols row) in
-  Cmdliner.Term.(const f $ io_params_cmdliner_term () $ params_cmdliner_term ())
-
-let info = Cmdliner.(Term.info "sim" ~doc:"HotPow Simulator")
-let () = Cmdliner.(Term.exit @@ Term.eval (term, info))
