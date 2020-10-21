@@ -1,8 +1,9 @@
 open Base
 
 (* TODO read from command line *)
-let n_blocks = 100
+let n_blocks = 128
 let n_nodes = 32
+let n_cores = 4
 
 let range a b =
   let rec r acc b = if b < a then acc else r (b :: acc) (b - 1) in
@@ -55,7 +56,7 @@ let configs =
 let () =
   let open Stdio in
   check_configs configs;
-  printf "Simulating %i configurations...\n" (List.length configs);
+  printf "Simulating %i configurations...\n%!" (List.length configs);
   let time_estimate =
     List.fold_left ~init:0 ~f:(+) (map estimate_time configs)
   in
@@ -63,18 +64,32 @@ let () =
   let io = Simulator.{ verbosity=0; progress=false } in
   let runs_file = Out_channel.create "output/runs.csv" in
   Out_channel.fprintf runs_file ("%s\n") Simulator.(csv_head cols);
-  List.iter ~f:(fun cfg ->
-      let h = Simulator.hash_params cfg in
-      let r = Simulator.simulate io cfg in
-      Out_channel.fprintf runs_file ("%s\n") Simulator.(csv_row cols {p=cfg;r});
-      let block_file = Out_channel.create (Printf.sprintf "output/%08x-blocks.csv" h) in
-      Out_channel.fprintf block_file "%s\n" Simulator.(csv_head block_cols) ;
-      List.iter
-        ~f:(fun b -> Out_channel.fprintf block_file "%s\n" Simulator.(csv_row block_cols b))
-        r.chain ;
-      Out_channel.close block_file;
-      progress := !progress + (estimate_time cfg);
-      printf "\r%3.0f%%%!" (rational !progress time_estimate *. 100.)
-    ) configs ;
+  let log_run p r =
+    Out_channel.fprintf runs_file ("%s\n") Simulator.(csv_row cols {p;r})
+  and write_blocks cfg r =
+    let open Simulator in
+    let h = hash_params cfg in
+    let block_file = Out_channel.create (Printf.sprintf "output/%08x-blocks.csv" h) in
+    Out_channel.fprintf block_file "%s\n" (csv_head block_cols) ;
+    List.iter
+      ~f:(fun b -> Out_channel.fprintf block_file "%s\n" (csv_row block_cols b))
+      r.chain ;
+    Out_channel.close block_file;
+  in
+  let queue = ref configs in
+  Parany.run n_cores
+    ~demux:(fun () ->
+        match !queue with
+        | [] -> raise Parany.End_of_input
+        | hd :: tl -> queue := tl; hd
+      )
+    ~work:(fun cfg -> cfg, Simulator.simulate io cfg)
+    ~mux:(fun (cfg, r) ->
+        (* all IO happens in the main process *)
+        log_run cfg r;
+        write_blocks cfg r;
+        progress := !progress + (estimate_time cfg);
+        printf "\r%3.0f%%%!" (rational !progress time_estimate *. 100.)
+      );
   Out_channel.close runs_file;
   printf "\n"
