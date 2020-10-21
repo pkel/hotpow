@@ -179,15 +179,6 @@ type event = ATV of {nth: int; node: int} | Net of net_event | Shutdown
 type eclipse = {till: float; queue: net_event Queue.t}
 type node = {m: (module Node); mutable eclipse: eclipse option}
 
-type state =
-  { mutable height: int
-  ; mutable atv_cnt: int
-  ; mutable shutdown: bool
-  ; attacker_id: DSA.public_key
-  ; attacker_secret: DSA.private_key
-  ; atv_rate: float
-  ; nodes: node array }
-
 let string_of_block b =
   let open Link in
   Printf.sprintf "Block %s->%s" (hash b |> to_string) (to_string b.parent)
@@ -209,29 +200,38 @@ let string_of_event =
   | ATV {nth; node} -> sprintf "assign %ith ATV to n%i" nth node
   | Shutdown -> sprintf "stop simulation"
 
-module Event = struct
-  (* Imperative interface for functional event queue *)
+include struct
   open Event_queue
 
-  let eq : event t ref = ref empty
-  let time = ref 0.
-  let now () = !time
-  let schedule ?(delay = 0.) event = eq := schedule !eq (!time +. delay) event
+  (* Imperative interface for functional event queue *)
+  class ['a] scheduler = object
+    val mutable time = 0.
+    val mutable queue : 'a Event_queue.t = empty
 
-  let next () =
-    let time', event, eq' = next !eq in
-    time := time' ;
-    eq := eq' ;
-    (time', event)
+    method now = time
+    method schedule ?(delay = 0.) event =
+      queue <- Event_queue.schedule queue (time +. delay) event
 
-  let empty () = !eq = empty
+    method next =
+      let time', event, queue' = next queue in
+      time <- time' ;
+      queue <- queue' ;
+      (time', event)
 
-  (* TODO. Use one clock per simulation for parallel execution *)
-  let reset () = time := 0.
-
-  let time = ()
-  let eq = ()
+    method empty = queue = empty
+  end
 end
+
+type state =
+  { mutable height: int
+  ; mutable atv_cnt: int
+  ; mutable shutdown: bool
+  ; attacker_id: DSA.public_key
+  ; attacker_secret: DSA.private_key
+  ; atv_rate: float
+  ; nodes: node array
+  ; scheduler : event scheduler
+  }
 
 let rec eclipse_random_node till nodes =
   (* Pick a node but not the attacker *)
@@ -246,7 +246,7 @@ let schedule_atv ~p ~s =
   and node =
     if Random.float 1. <= p.alpha then 0
     else Random.int (Array.length s.nodes - 1) + 1 in
-  Event.schedule ~delay (ATV {nth= s.atv_cnt; node})
+  s.scheduler#schedule ~delay (ATV {nth= s.atv_cnt; node})
 
 let handle_event ~p ~s =
   let handle_net = function
@@ -260,7 +260,7 @@ let handle_event ~p ~s =
           (fun rcv _ ->
             if rcv <> src then
               let delay = if lat > 0. then draw p.delta_dist lat else 0. in
-              Event.schedule ~delay (Net (Deliver {src; rcv; cnt; m})))
+              s.scheduler#schedule ~delay (Net (Deliver {src; rcv; cnt; m})))
           s.nodes
     | Deliver x ->
         let n = s.nodes.(x.rcv) in
@@ -288,7 +288,7 @@ let handle_event ~p ~s =
       match n.eclipse with
       | None -> handle_net ev
       | Some eclipse ->
-          let now = Event.now () in
+          let now = s.scheduler#now in
           if now < eclipse.till then Queue.push ev eclipse.queue
           else (
             uneclipse n ;
@@ -299,24 +299,24 @@ let quorum_threshold = Weight.max_weight
 
 let broadcast =
   let message_cnt = ref 0 in
-  fun nr ->
+  fun (scheduler : event scheduler) nr ->
     let module B = struct
       let send m =
         incr message_cnt ;
-        Event.schedule (Net (Broadcast {cnt= !message_cnt; m; src= nr}))
+        scheduler#schedule (Net (Broadcast {cnt= !message_cnt; m; src= nr}))
     end in
     (module B : Broadcast)
 
-let spawn ~p id secret strategy =
+let spawn ~p scheduler id secret strategy =
   let module Config = struct
     let quorum_size = p.quorum_size
     let quorum_threshold = quorum_threshold
     let confirmations = p.confirmations
     let my_id = id
     let my_secret = secret
-    let now = Event.now
+    let now () = scheduler#now
   end in
-  let (module Broadcast) = broadcast DSA.(int_of_id id)
+  let (module Broadcast) = broadcast scheduler DSA.(int_of_id id)
   and (module Implementation) = implementation_of_strategy strategy in
   (module Implementation.Spawn (Broadcast) (Config) : Node)
 
@@ -469,7 +469,7 @@ let ratio a b = float_of_int a /. float_of_int b
 let result ~p ~s =
   let max_vote, max_vote_mean, max_vote_sd =
     from_uneclipsed max_vote_weight_stats s.nodes
-  and block_time = Event.now () /. float_of_int (s.height + 3)
+  and block_time = s.scheduler#now /. float_of_int (s.height + 3)
   and efficiency =
     ratio ((s.height + 3) * p.quorum_size) s.atv_cnt
     (* plus three because 3 blocks are not yet committed *) in
@@ -494,15 +494,17 @@ let result ~p ~s =
   ; chain= from_uneclipsed get_chain s.nodes }
 
 let init ~p =
-  let attacker_id, attacker_secret = DSA.id_of_int 0 in
+  let attacker_id, attacker_secret = DSA.id_of_int 0
+  and scheduler = new scheduler
+  in
   let atv_rate = float_of_int p.quorum_size
   and nodes : node array =
     Array.init p.n_nodes (fun i ->
         let m =
-          if i = 0 then spawn ~p attacker_id attacker_secret p.strategy
+          if i = 0 then spawn ~p scheduler attacker_id attacker_secret p.strategy
           else
             let id, secret = DSA.id_of_int i in
-            spawn ~p id secret p.protocol in
+            spawn ~p scheduler id secret p.protocol in
         {m; eclipse= None}) in
   let () =
     (* eclipse first set of nodes *)
@@ -520,7 +522,9 @@ let init ~p =
   ; attacker_id
   ; attacker_secret
   ; atv_rate
-  ; nodes }
+  ; nodes
+  ; scheduler
+  }
 
 let event_filter verbosity = function
   | Net (Deliver _) when verbosity >= 3 -> true
@@ -529,22 +533,21 @@ let event_filter verbosity = function
   | _ -> false
 
 let simulate io p =
-  let () = Event.reset () in
   let s = init ~p in
   let log t e =
     if event_filter io.verbosity e then
       Printf.printf "%14.5f    %s\n%!" t (string_of_event e) in
   if io.progress then Printf.eprintf "%s\n%!" (csv_head cols_progress) ;
   schedule_atv ~p ~s ;
-  while not (Event.empty ()) do
-    let t, e = Event.next () in
+  while not s.scheduler#empty do
+    let t, e = s.scheduler#next in
     let () =
       match e with
       | Net (Broadcast {m= Block _; src; _}) ->
           s.height <- max (get_height s.nodes.(src).m) s.height ;
           if s.height >= p.n_blocks && not s.shutdown then (
             s.shutdown <- true ;
-            Event.schedule Shutdown )
+            s.scheduler#schedule Shutdown )
       | _ -> () in
     handle_event ~p ~s e ; log t e
   done ;
