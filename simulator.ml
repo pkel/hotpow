@@ -2,7 +2,8 @@ let () = Random.self_init ()
 
 open Primitives
 
-type distribution = Exponential | Uniform [@@deriving hash, show { with_path = false }]
+type distribution = Exponential | Uniform
+[@@deriving hash, show {with_path= false}]
 
 let string_of_distribution = function
   | Exponential -> "exponential"
@@ -16,7 +17,8 @@ let draw d p =
   | Uniform -> p *. Random.float 2.
   | Exponential -> -1. *. p *. log (Random.float 1.)
 
-type strategy = Parallel | Hotpow | Hotpow_censor [@@deriving hash, show { with_path = false }]
+type strategy = Parallel | Hotpow | Hotpow_censor
+[@@deriving hash, show {with_path= false}]
 
 let strategy_enum = [Parallel; Hotpow; Hotpow_censor]
 
@@ -34,6 +36,7 @@ let strategy_enum = List.map (fun s -> (string_of_strategy s, s)) strategy_enum
 
 include struct
   [@@@ocaml.warning "-39"]
+
   open Base
 
   type params =
@@ -69,7 +72,8 @@ include struct
     ; leader_failure_rate: float [@default 0.] [@aka ["f"]]
           (** Set the probability of a truthful leader failing to propose a
               block. We model leader failure by suppressing block proposals. *)
-    } [@@deriving cmdliner, hash, show { with_path = false }]
+    }
+  [@@deriving cmdliner, hash, show {with_path= false}]
 
   type io_params =
     { progress: bool
@@ -78,14 +82,14 @@ include struct
     ; verbosity: int [@aka ["v"]] [@default 0]
           (** Print events. > 0 : Message send; > 1 : ATV assignments;
               > 2 : Message delivery *)
-    } [@@deriving cmdliner]
+    }
+  [@@deriving cmdliner]
 end
 
 let check_params p =
   let fail p msg =
     let m = Printf.sprintf "%s %s" p msg in
-    failwith m
-  in
+    failwith m in
   try
     if p.n_nodes < 2 then fail "n-blocks" "must be >= 2" ;
     if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
@@ -97,7 +101,7 @@ let check_params p =
     if p.eclipse_time <= 0. then fail "eclipse-time" "must be > 0" ;
     if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
     if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
-      fail "leader-failure-rate" "must be in [0,1]";
+      fail "leader-failure-rate" "must be in [0,1]" ;
     Ok p
   with Failure m -> Error m
 
@@ -129,7 +133,7 @@ let cols : row column list =
   and f = string_of_float
   and s = string_of_strategy
   and d = string_of_distribution in
-  [ {title= "id" ; f=(fun x -> hash_params x.p |> Printf.sprintf "%08x")}
+  [ {title= "id"; f= (fun x -> hash_params x.p |> Printf.sprintf "%08x")}
   ; {title= "p.protocol"; f= (fun x -> s x.p.protocol)}
   ; {title= "p.confirmations"; f= (fun x -> i x.p.confirmations)}
   ; {title= "p.quorum_size"; f= (fun x -> i x.p.quorum_size)}
@@ -204,22 +208,25 @@ include struct
   open Event_queue
 
   (* Imperative interface for functional event queue *)
-  class ['a] scheduler = object
-    val mutable time = 0.
-    val mutable queue : 'a Event_queue.t = empty
+  class ['a] scheduler =
+    object
+      val mutable time = 0.
 
-    method now = time
-    method schedule ?(delay = 0.) event =
-      queue <- Event_queue.schedule queue (time +. delay) event
+      val mutable queue : 'a Event_queue.t = empty
 
-    method next =
-      let time', event, queue' = next queue in
-      time <- time' ;
-      queue <- queue' ;
-      (time', event)
+      method now = time
 
-    method empty = queue = empty
-  end
+      method schedule ?(delay = 0.) event =
+        queue <- Event_queue.schedule queue (time +. delay) event
+
+      method next =
+        let time', event, queue' = next queue in
+        time <- time' ;
+        queue <- queue' ;
+        (time', event)
+
+      method empty = queue = empty
+    end
 end
 
 type state =
@@ -230,8 +237,7 @@ type state =
   ; attacker_secret: DSA.private_key
   ; atv_rate: float
   ; nodes: node array
-  ; scheduler : event scheduler
-  }
+  ; scheduler: event scheduler }
 
 let rec eclipse_random_node till nodes =
   (* Pick a node but not the attacker *)
@@ -495,13 +501,13 @@ let result ~p ~s =
 
 let init ~p =
   let attacker_id, attacker_secret = DSA.id_of_int 0
-  and scheduler = new scheduler
-  in
+  and scheduler = new scheduler in
   let atv_rate = float_of_int p.quorum_size
   and nodes : node array =
     Array.init p.n_nodes (fun i ->
         let m =
-          if i = 0 then spawn ~p scheduler attacker_id attacker_secret p.strategy
+          if i = 0 then
+            spawn ~p scheduler attacker_id attacker_secret p.strategy
           else
             let id, secret = DSA.id_of_int i in
             spawn ~p scheduler id secret p.protocol in
@@ -523,8 +529,7 @@ let init ~p =
   ; attacker_secret
   ; atv_rate
   ; nodes
-  ; scheduler
-  }
+  ; scheduler }
 
 let event_filter verbosity = function
   | Net (Deliver _) when verbosity >= 3 -> true
