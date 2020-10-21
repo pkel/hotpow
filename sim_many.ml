@@ -3,7 +3,7 @@ open Base
 (* TODO read from command line *)
 let n_blocks = 128
 let n_nodes = 32
-let n_cores = 4
+let n_cores = Cpu.numcores ()
 
 let range a b =
   let rec r acc b = if b < a then acc else r (b :: acc) (b - 1) in
