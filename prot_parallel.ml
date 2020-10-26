@@ -17,7 +17,7 @@ module PartialQuorum : sig
   val complete : replace:bool -> t -> quorum option
   (** [complete ?replace t] attempts to return a complete quorum for the id and
       reference given to {create}. This function generally prefers own votes
-      over foreign votes.  If replace is true, the function attempts to replace
+      over foreign votes. If replace is true, the function attempts to replace
       the truthful leader by omitting small foreign votes. *)
 end = struct
   module Elt = struct
@@ -93,8 +93,8 @@ end = struct
               | Seq.Nil -> None
               | Cons (elt, tl) -> f (n + 1) ((elt.id, elt.sol) :: acc) tl in
           f 0 [] (Set.to_seq merged) in
-        (* for replace=false we have to make sure that we lead
-           TODO: we could check this before assembling the quorum. *)
+        (* for replace=false we have to make sure that we lead TODO: we could
+           check this before assembling the quorum. *)
         if replace then quorum
         else
           match quorum with
@@ -105,8 +105,9 @@ end = struct
   let progress t = Set.cardinal t.own + Set.cardinal t.foreign
 end
 
-(** Impure module for managing multiple partial quorums indexed by block reference.
-    This is a thin wrapper around the functions exposed by {PartialQuorum}. *)
+(** Impure module for managing multiple partial quorums indexed by block
+    reference. This is a thin wrapper around the functions exposed by
+    {PartialQuorum}. *)
 module VoteStore : sig
   type t
 
@@ -164,7 +165,8 @@ module BlockStore : sig
   (** An ['a t] stores values of type ['a].*)
 
   type 'a key = {parent: 'a -> block Link.t; this: 'a -> block Link.t}
-  (** An ['a key] provides functions to read the ['a]'s block hash and parent hash. *)
+  (** An ['a key] provides functions to read the ['a]'s block hash and parent
+      hash. *)
 
   val create : 'a key -> 'a t
   (** [create key] sets up an empty store. Elements will be indexed using the
@@ -242,10 +244,9 @@ let genesis : block =
   ; signature= Obj.magic "signed by Satoshi" }
 
 (** Mutable state for the parallel PoW protocol. Implements a receive window for
-    blocks. Maintains application state.
-    TODO: abstract commit rule and reuse this for HotPoW.
-    Maybe have one module that implements block tree and receive window.
-*)
+    blocks. Maintains application state. TODO: abstract commit rule and reuse
+    this for HotPoW. Maybe have one module that implements block tree and
+    receive window. *)
 module Chain : sig
   type t
 

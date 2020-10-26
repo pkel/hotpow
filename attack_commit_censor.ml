@@ -1,7 +1,7 @@
 (* Protocol Deviation: Censoring
 
    The censoring attacker wants to contribute as many blocks to the blockchain
-   as possible. He proposes complete blocks but withholds all of his votes.  *)
+   as possible. He proposes complete blocks but withholds all of his votes. *)
 
 open Primitives
 open Prot_commit
@@ -40,9 +40,8 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
   let on_receive = function
     | Vote ((lnk, _, _) as vote) when Weight.weigh vote <= quorum_threshold ->
         let fresh = Chain.count_vote chain vote in
-        (* Propose using the new vote.
-           Strategy: only propose when we are the truthful leader. Otherwise
-           we would leak our withheld votes. *)
+        (* Propose using the new vote. Strategy: only propose when we are the
+           truthful leader. Otherwise we would leak our withheld votes. *)
         if fresh then ignore (propose ~replace:false lnk) ;
         fresh
     | Vote _ -> false

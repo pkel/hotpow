@@ -2,9 +2,8 @@ open Primitives
 include Prot_parallel
 
 (** Mutable state for the HotPoW protocol. Implements a receive window for
-    blocks. Maintains Application state.
-    TODO: This duplicates a lot of stuff in Prot_parallel.Chain. Deduplicate. Only new aspect is commit new rule.
-*)
+    blocks. Maintains Application state. TODO: This duplicates a lot of stuff in
+    Prot_parallel.Chain. Deduplicate. Only new aspect is commit new rule. *)
 module Chain : sig
   type t
 

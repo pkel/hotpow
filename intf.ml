@@ -55,8 +55,7 @@ module type Node = sig
 
   val on_atv : int -> unit
   (** Make us of an ATV. [on_atv sol] uses [sol] as solution in a vote. Only
-      works when [sol] satisfies threshold rule for currently preferred block.
-      *)
+      works when [sol] satisfies threshold rule for currently preferred block. *)
 
   val get_state : unit -> state
   (** Extract committed application state. *)

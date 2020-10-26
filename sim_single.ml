@@ -6,7 +6,8 @@ include struct
   type cli =
     { header: bool  (** Print csv headers and exit. *)
     ; block_file: string option [@aka ["o"]]
-          (** Write per-block measurements to the given file. Includes only the longest chain up to the confirmed height (see --confirmations) *)
+          (** Write per-block measurements to the given file. Includes only the
+              longest chain up to the confirmed height (see --confirmations) *)
     }
   [@@deriving cmdliner]
 end

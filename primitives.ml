@@ -74,8 +74,8 @@ let message_to_string = function
   | Vote v -> vote_to_string v
 
 module App = struct
-  (** This dummy App keeps track of the block height and
-      records the history of quorums. *)
+  (** This dummy App keeps track of the block height and records the history of
+      quorums. *)
 
   type transition = payload
 

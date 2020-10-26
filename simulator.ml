@@ -47,7 +47,8 @@ include struct
     ; protocol: strategy [@default Parallel] [@aka ["p"]] [@enum strategy_enum]
           (** Set the protocol, i.e. the strategy used by honest nodes. *)
     ; confirmations: int [@default 3] [@aka ["k"]]
-          (** Set the number of confirmations needed for accepting the payload of a block. Updates deeper than k are considered inconsistencies. *)
+          (** Set the number of confirmations needed for accepting the payload
+              of a block. Updates deeper than k are considered inconsistencies. *)
     ; quorum_size: int [@default 8] [@aka ["q"]]  (** Set the quorum size. *)
     ; strategy: strategy [@default Parallel] [@aka ["s"]] [@enum strategy_enum]
           (** Set the attacker's strategy. *)
@@ -67,8 +68,7 @@ include struct
     ; churn: float [@default 0.] [@aka ["c"]]
           (** Set how many (relative) nodes are eclipsed from the network. As
               soon as one eclipse ends (after eclipse-time), another random
-              (non-attacker) node is eclipsed.
-              *)
+              (non-attacker) node is eclipsed. *)
     ; leader_failure_rate: float [@default 0.] [@aka ["f"]]
           (** Set the probability of a truthful leader failing to propose a
               block. We model leader failure by suppressing block proposals. *)
@@ -80,9 +80,8 @@ include struct
           (** Print intermediate results to STDERR. Constructing the
               intermediate results creates a significant overhead. *)
     ; verbosity: int [@aka ["v"]] [@default 0]
-          (** Print events. > 0 : Message send; > 1 : ATV assignments;
-              > 2 : Message delivery *)
-    }
+          (** Print events. > 0 : Message send; > 1 : ATV assignments; > 2 :
+              Message delivery *) }
   [@@deriving cmdliner]
 end
 
