@@ -6,7 +6,7 @@ module Link : Hash = struct
 
   let hash x = Hashtbl.seeded_hash_param 255 255 42 x
   let equal = ( = )
-  let to_string = Printf.sprintf "%x"
+  let to_string = Printf.sprintf "%08x"
 end
 
 (** Dummy weight hash for proof of work *)
@@ -95,6 +95,8 @@ module App = struct
     let height = match s with [] -> 0 | {height; _} :: _ -> height + 1 in
     {height; quorum; parent; hash; payload} :: s
 
+  (* TODO: tracking time in the app is redundant since the simulator build a
+     block tree itself. remove *)
   let propose ~time : transition = {time}
   let verify _ = true
 end

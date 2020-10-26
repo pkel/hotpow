@@ -31,7 +31,7 @@ let term =
           Printf.fprintf f "%s\n" (csv_head block_cols) ;
           List.iter
             (fun b -> Printf.fprintf f "%s\n" (csv_row block_cols b))
-            r.chain ;
+            r.blocks ;
           close_out f
       | None -> () in
     let row = {p; r} in

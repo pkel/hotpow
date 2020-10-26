@@ -1,8 +1,8 @@
 open Base
 
 (* TODO read from command line *)
-let n_blocks = 128
-let n_nodes = 32
+let n_blocks = 1024
+let n_nodes = 128
 let n_cores = Cpu.numcores ()
 
 let range a b =
@@ -10,6 +10,7 @@ let range a b =
   r [] b
 
 let map f l = List.map ~f l
+let iter f l = List.iter ~f l
 let foldl f init l = List.fold_left ~f ~init l
 let rational a b = Float.of_int a /. Float.of_int b
 
@@ -17,53 +18,99 @@ let estimate_time cfg =
   let open Simulator in
   cfg.quorum_size * cfg.n_blocks * cfg.n_nodes
 
-let check_configs l =
-  let ok = ref true in
-  List.iteri
-    ~f:(fun i c ->
-      let open Stdio in
-      match Simulator.check_params c with
-      | Ok _ -> ()
-      | Error s ->
-          eprintf "Error in %i-th configuration: %s\n%s\n%!" i s
-            (Simulator.show_params c) ;
-          ok := false)
-    l ;
-  if not !ok then Caml.exit 1
+type task =
+  {params: Simulator.params; estimate: int; mutable tags: string list; hash: int}
 
-let configs =
+let tasks = Hashtbl.create (module Int)
+
+let check_params ~tag p =
+  let open Stdio in
+  match Simulator.check_params p with
+  | Ok _ -> ()
+  | Error s ->
+      eprintf "Error in configuration tagged %s: %s\n%s\n%!" tag s
+        (Simulator.show_params p) ;
+      Caml.exit 1
+
+let schedule ~tag params =
+  let hash = Simulator.hash_params params in
+  match Hashtbl.find tasks hash with
+  | None ->
+      let () = check_params ~tag params in
+      let data = {params; estimate= estimate_time params; tags= [tag]; hash} in
+      Hashtbl.set tasks ~key:hash ~data
+  | Some ct -> ct.tags <- tag :: ct.tags
+
+let () =
+  (* keep 1 atv per 1 delta fixed, scale quorum size, investigate orphans *)
+  let open Simulator in
   range 0 8
   |> map (fun x -> 1 lsl x)
-  |> map (fun quorum_size ->
-         let open Simulator in
-         { n_nodes
-         ; n_blocks
-         ; protocol= Parallel
-         ; quorum_size
-         ; confirmations= 3
-         ; delta_dist= Exponential
-         ; delta_vote= 0.
-         ; delta_block= 0.
-         ; leader_failure_rate= 0.
-         ; churn= 0.
-         ; eclipse_time= 10.
-         ; (* Attacker *)
-           alpha= rational 1 n_nodes
-         ; strategy= Parallel })
+  |> iter (fun quorum_size ->
+         let uni =
+           { n_nodes
+           ; n_blocks
+           ; protocol= Parallel
+           ; quorum_size
+           ; confirmations= 6
+           ; pow_scale= 1.
+           ; delta_dist= Uniform
+           ; delta_vote= 1.
+           ; delta_block= 1.
+           ; leader_failure_rate= 0.
+           ; churn= 0.
+           ; eclipse_time= 10.
+           ; (* Attacker *)
+             alpha= rational 1 n_nodes
+           ; strategy= Parallel } in
+         schedule ~tag:"fixed-rate" uni ;
+         schedule ~tag:"fixed-rate" {uni with delta_dist= Exponential})
+
+let () =
+  (* keep quorum size fixed, speed up pow, investigate orphans *)
+  let open Simulator in
+  range 0 10
+  |> map (fun x -> 1 lsl x)
+  |> iter (fun speed ->
+         let q1_uni =
+           { n_nodes
+           ; n_blocks
+           ; protocol= Parallel
+           ; quorum_size= 1
+           ; confirmations= 32
+           ; pow_scale= rational speed (1 lsl 3)
+           ; delta_dist= Uniform
+           ; delta_vote= 1.
+           ; delta_block= 1.
+           ; leader_failure_rate= 0.
+           ; churn= 0.
+           ; eclipse_time= 10.
+           ; (* Attacker *)
+             alpha= rational 1 n_nodes
+           ; strategy= Parallel } in
+         let q1_exp = {q1_uni with delta_dist= Exponential} in
+         schedule ~tag:"fixed-quorum" q1_uni ;
+         schedule ~tag:"fixed-quorum" q1_exp ;
+         schedule ~tag:"fixed-quorum" {q1_uni with quorum_size= 64} ;
+         schedule ~tag:"fixed-quorum" {q1_exp with quorum_size= 64})
 
 let () =
   let open Stdio in
-  check_configs configs ;
+  let configs = Hashtbl.data tasks in
   printf "Simulating %i configurations...\n%!" (List.length configs) ;
   let time_estimate =
-    List.fold_left ~init:0 ~f:( + ) (map estimate_time configs) in
+    List.fold_left ~init:0 ~f:( + ) (map (fun c -> c.estimate) configs) in
   let progress = ref 0 in
-  let io = Simulator.{verbosity= 0; progress= false} in
+  let io = Simulator.{verbosity= 0} in
   let runs_file = Out_channel.create "output/runs.csv" in
-  Out_channel.fprintf runs_file "%s\n" Simulator.(csv_head cols) ;
-  let log_run p r =
-    Out_channel.fprintf runs_file "%s\n" Simulator.(csv_row cols {p; r})
-  and write_blocks cfg r =
+  Out_channel.fprintf runs_file "tag,id,%s\n%!" Simulator.(csv_head cols) ;
+  let log_run task r =
+    let row = Simulator.(csv_row cols {p= task.params; r}) in
+    iter
+      (fun tag ->
+        Out_channel.fprintf runs_file "%s,%08x,%s\n%!" tag task.hash row)
+      task.tags
+  and write_blocks cfg (r : Simulator.result) =
     let open Simulator in
     let h = hash_params cfg in
     let block_file =
@@ -71,9 +118,10 @@ let () =
     Out_channel.fprintf block_file "%s\n" (csv_head block_cols) ;
     List.iter
       ~f:(fun b -> Out_channel.fprintf block_file "%s\n" (csv_row block_cols b))
-      r.chain ;
+      r.blocks ;
     Out_channel.close block_file in
   let queue = ref configs in
+  printf "%3.0f%%%!" 0. ;
   Parany.run n_cores
     ~demux:(fun () ->
       match !queue with
@@ -81,12 +129,12 @@ let () =
       | hd :: tl ->
           queue := tl ;
           hd)
-    ~work:(fun cfg -> (cfg, Simulator.simulate io cfg))
-    ~mux:(fun (cfg, r) ->
+    ~work:(fun task -> (task, Simulator.simulate io task.params))
+    ~mux:(fun (task, r) ->
       (* all IO happens in the main process *)
-      log_run cfg r ;
-      write_blocks cfg r ;
-      progress := !progress + estimate_time cfg ;
+      log_run task r ;
+      write_blocks task.params r ;
+      progress := !progress + task.estimate ;
       printf "\r%3.0f%%%!" (rational !progress time_estimate *. 100.)) ;
   Out_channel.close runs_file ;
   printf "\n"

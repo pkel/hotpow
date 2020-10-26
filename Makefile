@@ -7,6 +7,7 @@ opam_container=ocaml/opam2:alpine-3.10-ocaml-4.09
 single: export OCAMLRUNPARAM=b
 single: build
 	mkdir -p output
+	dune exec powsim -- --header ;\
 	dune exec powsim -- -o output/blocks.csv
 
 many: export OCAMLRUNPARAM=b

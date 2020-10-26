@@ -1,6 +1,7 @@
 let () = Random.self_init ()
 
 open Primitives
+module BlockStore = Prot_parallel.BlockStore
 
 type distribution = Exponential | Uniform
 [@@deriving hash, show {with_path= false}]
@@ -50,6 +51,9 @@ include struct
           (** Set the number of confirmations needed for accepting the payload
               of a block. Updates deeper than k are considered inconsistencies. *)
     ; quorum_size: int [@default 8] [@aka ["q"]]  (** Set the quorum size. *)
+    ; pow_scale: float [@default 1.]
+          (** Set the expected puzzle solving time, i.e. the scale of the
+              exponential distribution driving proof-of-work. *)
     ; strategy: strategy [@default Parallel] [@aka ["s"]] [@enum strategy_enum]
           (** Set the attacker's strategy. *)
     ; alpha: float [@default 1. /. 16.] [@aka ["a"]]
@@ -76,10 +80,7 @@ include struct
   [@@deriving cmdliner, hash, show {with_path= false}]
 
   type io_params =
-    { progress: bool
-          (** Print intermediate results to STDERR. Constructing the
-              intermediate results creates a significant overhead. *)
-    ; verbosity: int [@aka ["v"]] [@default 0]
+    { verbosity: int [@aka ["v"]] [@default 0]
           (** Print events. > 0 : Message send; > 1 : ATV assignments; > 2 :
               Message delivery *) }
   [@@deriving cmdliner]
@@ -90,7 +91,7 @@ let check_params p =
     let m = Printf.sprintf "%s %s" p msg in
     failwith m in
   try
-    if p.n_nodes < 2 then fail "n-blocks" "must be >= 2" ;
+    if p.n_nodes < 2 then fail "n-nodes" "must be >= 2" ;
     if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
     if p.confirmations < 1 then fail "confirmations" "must be >= 1" ;
     if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
@@ -104,21 +105,27 @@ let check_params p =
     Ok p
   with Failure m -> Error m
 
+type sim_vote =
+  { data: vote
+  ; target_height: int (* data.ref.height + 1 *)
+  ; published_at: float
+  ; mutable confirmed: bool (* modified after simulation *) }
+
+type sim_block =
+  { hash: block Link.t
+  ; data: block
+  ; height: int
+  ; published_at: float
+  ; mutable confirmed: bool (* modified after simulation *) }
+
 type result =
-  { block_cnt: int
-  ; attacker_block_cnt: int
-  ; attacker_vote_cnt: int
-  ; attacker_block_share: float
-  ; attacker_vote_share: float
-  ; branches: int
-  ; branch_depth: int
-  ; atv_cnt: int
-  ; max_vote: float
-  ; max_vote_mean: float
-  ; max_vote_sd: float
-  ; efficiency: float
-  ; block_time: float
-  ; chain: App.entry list }
+  { blocks_observed: int
+  ; blocks_confirmed: int
+  ; votes_observed: int
+  ; votes_confirmed: int
+  ; mean_interval: float
+  ; blocks: sim_block list
+  ; votes: sim_vote list }
 
 type 'a column = {title: string; f: 'a -> string}
 
@@ -127,52 +134,44 @@ let csv_row cols row = String.concat "," (List.map (fun x -> x.f row) cols)
 
 type row = {p: params; r: result}
 
-let cols : row column list =
+module ToString = struct
   let i = string_of_int
-  and f = string_of_float
-  and s = string_of_strategy
-  and d = string_of_distribution in
-  [ {title= "id"; f= (fun x -> hash_params x.p |> Printf.sprintf "%08x")}
-  ; {title= "p.protocol"; f= (fun x -> s x.p.protocol)}
-  ; {title= "p.confirmations"; f= (fun x -> i x.p.confirmations)}
-  ; {title= "p.quorum_size"; f= (fun x -> i x.p.quorum_size)}
-  ; {title= "p.n_blocks"; f= (fun x -> i x.p.n_blocks)}
-  ; {title= "p.n_nodes"; f= (fun x -> i x.p.n_nodes)}
-  ; {title= "p.alpha"; f= (fun x -> f x.p.alpha)}
-  ; {title= "p.strategy"; f= (fun x -> s x.p.strategy)}
-  ; {title= "p.delta_dist"; f= (fun x -> d x.p.delta_dist)}
-  ; {title= "p.delta_vote"; f= (fun x -> f x.p.delta_vote)}
-  ; {title= "p.delta_block"; f= (fun x -> f x.p.delta_block)}
-  ; {title= "p.churn"; f= (fun x -> f x.p.churn)}
-  ; {title= "p.eclipse_time"; f= (fun x -> f x.p.eclipse_time)}
-  ; {title= "p.leader_failure_rate"; f= (fun x -> f x.p.leader_failure_rate)}
-  ; {title= "r.branches"; f= (fun x -> i x.r.branches)}
-  ; {title= "r.branch_depth"; f= (fun x -> i x.r.branch_depth)}
-  ; {title= "r.block_cnt"; f= (fun x -> i x.r.block_cnt)}
-  ; {title= "r.attacker_block_cnt"; f= (fun x -> i x.r.attacker_block_cnt)}
-  ; {title= "r.attacker_vote_cnt"; f= (fun x -> i x.r.attacker_vote_cnt)}
-  ; {title= "r.attacker_block_share"; f= (fun x -> f x.r.attacker_block_share)}
-  ; {title= "r.attacker_vote_share"; f= (fun x -> f x.r.attacker_vote_share)}
-  ; {title= "r.atv_cnt"; f= (fun x -> i x.r.atv_cnt)}
-  ; {title= "r.max_vote"; f= (fun x -> f x.r.max_vote)}
-  ; {title= "r.max_vote_mean"; f= (fun x -> f x.r.max_vote_mean)}
-  ; {title= "r.max_vote_sd"; f= (fun x -> f x.r.max_vote_sd)}
-  ; {title= "r.efficiency"; f= (fun x -> f x.r.efficiency)}
-  ; {title= "r.block_time"; f= (fun x -> f x.r.block_time)} ]
+  let f = string_of_float
+  let s = string_of_strategy
+  let d = string_of_distribution
+  let h = Link.to_string
+  let b x = if x then "1" else "0"
+end
 
-let cols_progress : row column list =
-  let i = string_of_int and f = string_of_float in
-  [ {title= "r.block_cnt"; f= (fun x -> i x.r.block_cnt)}
-  ; {title= "r.branches"; f= (fun x -> i x.r.branches)}
-  ; {title= "r.branch_depth"; f= (fun x -> i x.r.branch_depth)}
-  ; {title= "r.attacker_block_share"; f= (fun x -> f x.r.attacker_block_share)}
-  ; {title= "r.attacker_vote_share"; f= (fun x -> f x.r.attacker_vote_share)}
-  ; {title= "r.block_time"; f= (fun x -> f x.r.block_time)} ]
+let cols : row column list =
+  let open ToString in
+  [ {title= "protocol"; f= (fun x -> s x.p.protocol)}
+  ; {title= "confirmations"; f= (fun x -> i x.p.confirmations)}
+  ; {title= "quorum.size"; f= (fun x -> i x.p.quorum_size)}
+  ; {title= "pow.scale"; f= (fun x -> f x.p.pow_scale)}
+  ; {title= "n.blocks"; f= (fun x -> i x.p.n_blocks)}
+  ; {title= "n.nodes"; f= (fun x -> i x.p.n_nodes)}
+  ; {title= "alpha"; f= (fun x -> f x.p.alpha)}
+  ; {title= "strategy"; f= (fun x -> s x.p.strategy)}
+  ; {title= "delta.dist"; f= (fun x -> d x.p.delta_dist)}
+  ; {title= "delta.vote"; f= (fun x -> f x.p.delta_vote)}
+  ; {title= "delta.block"; f= (fun x -> f x.p.delta_block)}
+  ; {title= "churn"; f= (fun x -> f x.p.churn)}
+  ; {title= "churn.eclipse.time"; f= (fun x -> f x.p.eclipse_time)}
+  ; {title= "leader.failure.rate"; f= (fun x -> f x.p.leader_failure_rate)}
+  ; {title= "blocks.observed"; f= (fun x -> i x.r.blocks_observed)}
+  ; {title= "blocks.confirmed"; f= (fun x -> i x.r.blocks_confirmed)}
+  ; {title= "votes.observed"; f= (fun x -> i x.r.votes_observed)}
+  ; {title= "votes.confirmed"; f= (fun x -> i x.r.votes_confirmed)}
+  ; {title= "mean.interval"; f= (fun x -> f x.r.mean_interval)} ]
 
-let block_cols : App.entry column list =
-  let i = string_of_int and f = string_of_float in
-  [ {title= "height"; f= (fun x -> i x.height)}
-  ; {title= "time"; f= (fun x -> f x.payload.time)} ]
+let block_cols : sim_block column list =
+  let open ToString in
+  [ {title= "hash"; f= (fun x -> h x.hash)}
+  ; {title= "parent"; f= (fun x -> h x.data.parent)}
+  ; {title= "published.at"; f= (fun x -> f x.published_at)}
+  ; {title= "height"; f= (fun x -> i x.height)}
+  ; {title= "confirmed"; f= (fun x -> b x.confirmed)} ]
 
 type net_event =
   | Broadcast of {src: int; cnt: int; m: message}
@@ -182,7 +181,7 @@ type event = ATV of {nth: int; node: int} | Net of net_event | Shutdown
 type eclipse = {till: float; queue: net_event Queue.t}
 type node = {m: (module Node); mutable eclipse: eclipse option}
 
-let string_of_block b =
+let string_of_block (b : block) =
   let open Link in
   Printf.sprintf "Block %s->%s" (hash b |> to_string) (to_string b.parent)
 
@@ -234,9 +233,13 @@ type state =
   ; mutable shutdown: bool
   ; attacker_id: DSA.public_key
   ; attacker_secret: DSA.private_key
-  ; atv_rate: float
+  ; target_height: int
   ; nodes: node array
-  ; scheduler: event scheduler }
+  ; scheduler: event scheduler
+  ; blocks: sim_block BlockStore.t
+        (* TODO this could be a (block Link.t, sim_block) Hashtbl.t *)
+  ; votes: (vote, sim_vote) Hashtbl.t
+  ; mutable head: block Link.t }
 
 let rec eclipse_random_node till nodes =
   (* Pick a node but not the attacker *)
@@ -247,7 +250,7 @@ let rec eclipse_random_node till nodes =
 
 (* Get time of next ATV and assign random ATV recipient. *)
 let schedule_atv ~p ~s =
-  let delay = draw Exponential (1. /. s.atv_rate)
+  let delay = draw Exponential p.pow_scale
   and node =
     if Random.float 1. <= p.alpha then 0
     else Random.int (Array.length s.nodes - 1) + 1 in
@@ -325,184 +328,63 @@ let spawn ~p scheduler id secret strategy =
   and (module Implementation) = implementation_of_strategy strategy in
   (module Implementation.Spawn (Broadcast) (Config) : Node)
 
-module StateTree : sig
-  type t
-  type state = int
-  type history = state list
-
-  val add : history -> t -> t
-  val of_seq : history Seq.t -> t
-  val empty : t
-  val branches : t -> int
-  val depth : t -> int
-  val print : t -> unit
-end = struct
-  type state = int
-  type history = state list
-  type node = {state: state; children: node list}
-  type t = node list
-
-  let empty = []
-
-  let rec print lvl nodes = List.iter (print' lvl) nodes
-
-  and print' lvl node =
-    Printf.printf "%i: %i\n%!" lvl node.state ;
-    print (lvl + 1) node.children
-
-  let print = print 0
-
-  let rec branches = function
-    | [] -> 1
-    | l -> List.fold_left (fun acc el -> branches el.children + acc) 0 l
-
-  (* drop consistent history *)
-  let rec compress = function
-    | [] -> []
-    | [node] -> compress node.children
-    | x -> x
-
-  let rec height acc nodes =
-    List.fold_left (fun m n -> max m (height (acc + 1) n.children)) acc nodes
-
-  let height = height 0
-  let depth t = compress t |> height
-
-  let rec merge neq history remaining =
-    match (history, remaining) with
-    | [], _ -> List.rev_append neq remaining
-    | state :: history, [] -> {state; children= merge [] history []} :: neq
-    | state :: history, node :: remaining when node.state = state ->
-        ({node with children= merge [] history node.children} :: neq)
-        @ remaining
-    | state :: history, node :: remaining ->
-        merge (node :: neq) (state :: history) remaining
-
-  let add = merge []
-  let of_seq = Seq.fold_left (fun acc el -> add el acc) empty
-end
-
-(* let () = *)
-(* let gen l = List.to_seq l |> StateTree.of_seq in *)
-(* let a = gen [[1; 2; 3; 4]; [1; 2; 3; 4]; [1; 2; 3]; [1; 2; 4]] *)
-(* and b = gen [[1; 2; 3; 4]; [1; 2; 3; 4; 5]; [1]; []] *)
-(* and c = gen [[1; 2; 3; 4]; [1; 3; 2; 4]; [1; 3; 2]; [1; 4; 3; 2]] *)
-(* and d = gen [[1; 2; 3; 4]; [1; 2; 3; 3]] *)
-(* in *)
-(* print_endline "a" ; *)
-(* StateTree.print a ; *)
-(* print_endline "b" ; *)
-(* StateTree.print b ; *)
-(* print_endline "c" ; *)
-(* StateTree.print c ; *)
-(* assert (StateTree.branches a = 2) ; *)
-(* assert (StateTree.branches b = 1) ; *)
-(* assert (StateTree.branches c = 3) ; *)
-(* assert (StateTree.branches d = 2) ; *)
-(* Printf.printf "depth: %i\n%!" (StateTree.depth a); *)
-(* Printf.printf "depth: %i\n%!" (StateTree.depth b); *)
-(* Printf.printf "depth: %i\n%!" (StateTree.depth c); *)
-(* Printf.printf "depth: %i\n%!" (StateTree.depth d); *)
-(* assert (StateTree.depth a = 2) ; *)
-(* assert (StateTree.depth b = 0) ; *)
-(* assert (StateTree.depth c = 3) ; *)
-(* assert (StateTree.depth d = 1) *)
-
-(** compare states, count versions, ignore the latest addition which might be
-    out of sync *)
-let branch_analysis nodes =
-  let open App in
-  let f n =
-    let (module N : Node) = n.m in
-    N.get_state () in
-  let states = Array.map f nodes in
-  let history state = List.rev_map (fun c -> Hashtbl.hash c.hash) state in
-  Array.map history states |> Array.to_seq |> StateTree.of_seq
-  |> fun st -> StateTree.(branches st, depth st)
-
-let count_leadership id (module N : Node) =
-  let open App in
-  let cnt = ref 0 in
-  let check_lead t = fst (List.nth t.quorum 0) = id in
-  List.iter (fun q -> if check_lead q then incr cnt) (N.get_state ()) ;
-  !cnt
-
-let count_votes id (module N : Node) =
-  let open App in
-  let cnt = ref 0 in
-  List.iter
-    (fun t -> List.iter (fun v -> if fst v = id then incr cnt) t.quorum)
-    (N.get_state ()) ;
-  !cnt
-
-let max_vote_weight_stats (module N : Node) =
-  let open App in
-  let weights =
-    N.get_state ()
-    |> List.map (fun t ->
-           List.(nth (rev t.quorum) 0)
-           |> fun (id, s) -> Weight.weigh (t.parent, id, s) |> float_of_int)
-  in
-  let n, mean, max =
-    let n, sum, max =
-      List.fold_left
-        (fun (n, sum, m) w -> (n + 1, w +. sum, max w m))
-        (0, 0., 0.) weights in
-    (n, sum /. float_of_int n, max) in
-  let sd =
-    let esum =
-      List.fold_left (fun esum w -> ((w -. mean) ** 2.) +. esum) 0. weights
-    in
-    sqrt (esum /. float_of_int n) in
-  (max, mean, sd)
-
-let get_height (module N : Node) =
-  match N.get_state () with [] -> 0 | {height; _} :: _ -> height
-
-let get_chain (module N : Node) = List.rev (N.get_state ())
-
-let from_uneclipsed get nodes =
-  let rec f seq =
-    match seq () with
-    | Seq.Nil -> get nodes.(1).m
-    | Cons (n, seq) -> (
-      match n.eclipse with None -> get n.m | Some _ -> f seq ) in
-  f Array.(sub nodes 1 (length nodes - 1) |> to_seq)
-
 let ratio a b = float_of_int a /. float_of_int b
 
-let result ~p ~s =
-  let max_vote, max_vote_mean, max_vote_sd =
-    from_uneclipsed max_vote_weight_stats s.nodes
-  and block_time = s.scheduler#now /. float_of_int (s.height + 3)
-  and efficiency =
-    ratio ((s.height + 3) * p.quorum_size) s.atv_cnt
-    (* plus three because 3 blocks are not yet committed *) in
-  let attacker_block_cnt =
-    from_uneclipsed (count_leadership s.attacker_id) s.nodes
-  and attacker_vote_cnt = from_uneclipsed (count_votes s.attacker_id) s.nodes
-  and block_cnt = s.height
-  and branches, branch_depth = branch_analysis s.nodes in
-  { block_cnt
-  ; attacker_block_cnt
-  ; attacker_block_share= ratio attacker_block_cnt block_cnt
-  ; attacker_vote_cnt
-  ; attacker_vote_share= ratio attacker_vote_cnt (block_cnt * p.quorum_size)
-  ; branches
-  ; branch_depth
-  ; max_vote_mean
-  ; max_vote_sd
-  ; max_vote
-  ; atv_cnt= s.atv_cnt
-  ; efficiency
-  ; block_time
-  ; chain= from_uneclipsed get_chain s.nodes }
+let result ~p ~s : result =
+  let () =
+    (* mark blocks on the longest chain as confirmed *)
+    let ptr = ref s.head in
+    let continue = ref true in
+    while !continue do
+      match BlockStore.get s.blocks !ptr with
+      | None -> continue := false
+      | Some b ->
+          b.confirmed <- true ;
+          ptr := b.data.parent ;
+          (* mark votes confirmed *)
+          List.iter
+            (fun (id, sol) ->
+              (Hashtbl.find s.votes (b.data.parent, id, sol)).confirmed <- true)
+            b.data.quorum
+    done in
+  let blocks, last_publication =
+    (* get all blocks up to confirmed height and sort by publication *)
+    BlockStore.elements s.blocks
+    |> List.filter (fun (a : sim_block) -> a.height <= p.n_blocks)
+    |> List.sort (fun a b -> Float.compare b.published_at a.published_at)
+    |> fun l -> (List.rev l, (List.hd l).published_at) in
+  let votes =
+    (* get all votes up to confirmed target height and sort by publication *)
+    Hashtbl.fold
+      (fun _v (sv : sim_vote) acc ->
+        if sv.target_height <= p.n_blocks then sv :: acc else acc)
+      s.votes []
+    |> List.sort (fun (a : sim_vote) b ->
+           Float.compare a.published_at b.published_at) in
+  let blocks_confirmed =
+    (* count confirmed blocks. Should equal requested number of blocks. *)
+    let cnt = ref 0 in
+    List.iter (fun b -> if b.confirmed then incr cnt) blocks ;
+    assert (!cnt = p.n_blocks) ;
+    !cnt
+  and votes_confirmed =
+    (* count confirmed votes. Should equal blocks_confirmed * quorum_size *)
+    let cnt = ref 0 in
+    List.iter (fun (v : sim_vote) -> if v.confirmed then incr cnt) votes ;
+    assert (!cnt = p.n_blocks * p.quorum_size) ;
+    !cnt in
+  { blocks_confirmed
+  ; blocks_observed= List.length blocks
+  ; votes_confirmed
+  ; votes_observed= List.length votes
+  ; mean_interval= last_publication /. float_of_int blocks_confirmed
+  ; blocks
+  ; votes }
 
 let init ~p =
   let attacker_id, attacker_secret = DSA.id_of_int 0
   and scheduler = new scheduler in
-  let atv_rate = float_of_int p.quorum_size
-  and nodes : node array =
+  let nodes : node array =
     Array.init p.n_nodes (fun i ->
         let m =
           if i = 0 then
@@ -526,9 +408,14 @@ let init ~p =
   ; shutdown= false
   ; attacker_id
   ; attacker_secret
-  ; atv_rate
+  ; target_height= p.n_blocks + p.confirmations
   ; nodes
-  ; scheduler }
+  ; scheduler
+  ; blocks=
+      BlockStore.create
+        {parent= (fun (x : sim_block) -> x.data.parent); this= (fun x -> x.hash)}
+  ; votes= Hashtbl.create (p.quorum_size * (p.n_blocks + p.confirmations))
+  ; head= Link.hash Prot_parallel.genesis }
 
 let event_filter verbosity = function
   | Net (Deliver _) when verbosity >= 3 -> true
@@ -536,24 +423,62 @@ let event_filter verbosity = function
   | Net (Broadcast _) when verbosity >= 1 -> true
   | _ -> false
 
+let height blockstore parent =
+  match BlockStore.get blockstore parent with
+  | Some (p : sim_block) -> Some (p.height + 1)
+  | None when parent = Link.hash Prot_parallel.genesis ->
+      (* genesis is not in this blockstore *)
+      Some 1
+  | None -> None
+
+let track_vote ~s (v : vote) =
+  if not (Hashtbl.mem s.votes v) then
+    let sv =
+      { data= v
+      ; published_at= s.scheduler#now
+      ; confirmed= false
+      ; target_height=
+          (let parent, _, _ = v in
+           match height s.blocks parent with
+           | Some x -> x
+           | None -> failwith "invalid parent in vote broadcast") } in
+    Hashtbl.add s.votes v sv
+
+let track_block ~s (b : block) =
+  let hash = Link.hash b and parent = b.parent in
+  if not (BlockStore.mem s.blocks hash) then (
+    let height =
+      match height s.blocks parent with
+      | Some x -> x
+      | None -> failwith "invalid parent in block broadcast" in
+    let sb =
+      {hash; data= b; height; published_at= s.scheduler#now; confirmed= false}
+    in
+    BlockStore.add s.blocks sb ;
+    (* track votes in quorum *)
+    List.iter (fun (id, sol) -> track_vote ~s (b.parent, id, sol)) b.quorum ;
+    (* update head? *)
+    if height > s.height then (
+      s.height <- height ;
+      s.head <- hash ) ;
+    (* shutdown ? *)
+    if s.height >= s.target_height && not s.shutdown then (
+      s.shutdown <- true ;
+      s.scheduler#schedule Shutdown ) )
+
 let simulate io p =
   let s = init ~p in
   let log t e =
     if event_filter io.verbosity e then
       Printf.printf "%14.5f    %s\n%!" t (string_of_event e) in
-  if io.progress then Printf.eprintf "%s\n%!" (csv_head cols_progress) ;
   schedule_atv ~p ~s ;
   while not s.scheduler#empty do
     let t, e = s.scheduler#next in
     let () =
       match e with
-      | Net (Broadcast {m= Block _; src; _}) ->
-          s.height <- max (get_height s.nodes.(src).m) s.height ;
-          if s.height >= p.n_blocks && not s.shutdown then (
-            s.shutdown <- true ;
-            s.scheduler#schedule Shutdown )
+      | Net (Broadcast {m= Block b; _}) -> track_block ~s b
+      | Net (Broadcast {m= Vote v; _}) -> track_vote ~s v
       | _ -> () in
     handle_event ~p ~s e ; log t e
   done ;
-  if io.progress then Printf.eprintf "\n%!" ;
   result ~p ~s

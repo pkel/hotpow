@@ -186,6 +186,9 @@ module BlockStore : sig
 
   val successors : 'a t -> block Link.t -> 'a list
   (** [successors t ref] returns all blocks [b] where [key.parent b = ref]. *)
+
+  val elements : 'a t -> 'a list
+  (** [elements t] returns all block in the store in unspecified order. *)
 end = struct
   type 'a key = {parent: 'a -> block Link.t; this: 'a -> block Link.t}
 
@@ -207,11 +210,14 @@ end = struct
         |> List.iter (fun _ -> Hashtbl.remove t.by_prnt key)
 
   let add t e =
-    Hashtbl.add t.by_prnt (t.key.parent e) e ;
-    Hashtbl.replace t.by_hash (t.key.this e) e
+    if Hashtbl.mem t.by_hash (t.key.this e) then ()
+    else (
+      Hashtbl.add t.by_prnt (t.key.parent e) e ;
+      Hashtbl.add t.by_hash (t.key.this e) e )
 
   let mem t = Hashtbl.mem t.by_hash
   let successors t = Hashtbl.find_all t.by_prnt
+  let elements t = Hashtbl.fold (fun _k v acc -> v :: acc) t.by_hash []
 end
 
 let valid_quorum ~config ref quorum =
