@@ -16,9 +16,8 @@
   (depends
    (dune (and :build (>= 1.10)))
    (base (< v0.13))
-   (sexplib :build)
-   (ezxmlm :build)
-   (ppx_sexp_conv :build)
+   (parany :build)
+   (ppx_hash :build)
    (ppx_deriving_cmdliner :build)))
 
 (package

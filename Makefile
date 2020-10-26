@@ -9,6 +9,11 @@ single: build
 	mkdir -p output
 	dune exec powsim -- -o output/blocks.csv
 
+many: export OCAMLRUNPARAM=b
+many: build
+	mkdir -p output
+	dune exec many
+
 static: export OCAMLRUNPARAM=b
 static: docker_build_static
 	_build/static/bin/hotpow_sim
@@ -23,7 +28,7 @@ format:
 	dune build @fmt --auto-promote
 
 deps: hotpow.opam hotpow-devel.opam
-	opam install . --deps-only
+	opam install . --deps-only --working-dir
 
 clean:
 	rm -r _build
