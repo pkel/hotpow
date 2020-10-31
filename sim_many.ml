@@ -3,6 +3,7 @@ open Base
 (* TODO read from command line *)
 let n_blocks = 1024
 let n_nodes = 128
+let n_iterations = 100
 let n_cores = Cpu.numcores ()
 
 let range a b =
@@ -19,7 +20,12 @@ let estimate_time cfg =
   cfg.quorum_size * cfg.n_blocks * cfg.n_nodes
 
 type task =
-  {params: Simulator.params; estimate: int; mutable tags: string list; hash: int}
+  { params: Simulator.params
+  ; id: int
+  ; (* params hash *)
+    estimate: int
+  ; mutable tags: string list
+  ; iteration: int }
 
 let tasks = Hashtbl.create (module Int)
 
@@ -33,13 +39,19 @@ let check_params ~tag p =
       Caml.exit 1
 
 let schedule ~tag params =
-  let hash = Simulator.hash_params params in
-  match Hashtbl.find tasks hash with
-  | None ->
-      let () = check_params ~tag params in
-      let data = {params; estimate= estimate_time params; tags= [tag]; hash} in
-      Hashtbl.set tasks ~key:hash ~data
-  | Some ct -> ct.tags <- tag :: ct.tags
+  let () = check_params ~tag params in
+  let id = Simulator.hash_params params in
+  iter
+    (fun iteration ->
+      let hash = Hashable.hash (id, iteration) in
+      match Hashtbl.find tasks hash with
+      | None ->
+          let data =
+            {params; estimate= estimate_time params; tags= [tag]; iteration; id}
+          in
+          Hashtbl.set tasks ~key:hash ~data
+      | Some ct -> ct.tags <- tag :: ct.tags)
+    (range 1 n_iterations)
 
 let () =
   (* keep 1 atv per 1 delta fixed, scale quorum size, investigate orphans *)
@@ -52,7 +64,7 @@ let () =
            ; n_blocks
            ; protocol= Parallel
            ; quorum_size
-           ; confirmations= 6
+           ; confirmations= 32
            ; pow_scale= 1.
            ; delta_dist= Uniform
            ; delta_vote= 1.
@@ -94,6 +106,12 @@ let () =
          schedule ~tag:"fixed-quorum" {q1_uni with quorum_size= 64} ;
          schedule ~tag:"fixed-quorum" {q1_exp with quorum_size= 64})
 
+let run_cols : (string * task) Simulator.column list =
+  let open Simulator.ToString in
+  [ {title= "tag"; f= fst}
+  ; {title= "id"; f= (fun (_, t) -> Printf.sprintf "%08x" t.id)}
+  ; {title= "iteration"; f= (fun (_, t) -> i t.iteration)} ]
+
 let () =
   let open Stdio in
   let configs = Hashtbl.data tasks in
@@ -103,18 +121,18 @@ let () =
   let progress = ref 0 in
   let io = Simulator.{verbosity= 0} in
   let runs_file = Out_channel.create "output/runs.csv" in
-  Out_channel.fprintf runs_file "tag,id,%s\n%!" Simulator.(csv_head cols) ;
-  let log_run task r =
-    let row = Simulator.(csv_row cols {p= task.params; r}) in
-    iter
-      (fun tag ->
-        Out_channel.fprintf runs_file "%s,%08x,%s\n%!" tag task.hash row)
-      task.tags
-  and write_blocks cfg (r : Simulator.result) =
+  Out_channel.fprintf runs_file "%s,%s\n%!"
+    (Simulator.csv_head run_cols)
+    Simulator.(csv_head cols) ;
+  let log_run t r =
+    let a tag = Simulator.csv_row run_cols (tag, t) in
+    let b = Simulator.(csv_row cols {p= t.params; r}) in
+    iter (fun tag -> Out_channel.fprintf runs_file "%s,%s\n%!" (a tag) b) t.tags
+  and write_blocks t (r : Simulator.result) =
     let open Simulator in
-    let h = hash_params cfg in
     let block_file =
-      Out_channel.create (Printf.sprintf "output/%08x-blocks.csv" h) in
+      Out_channel.create
+        (Printf.sprintf "output/blocks-%08x-%i.csv" t.id t.iteration) in
     Out_channel.fprintf block_file "%s\n" (csv_head block_cols) ;
     List.iter
       ~f:(fun b -> Out_channel.fprintf block_file "%s\n" (csv_row block_cols b))
@@ -133,7 +151,7 @@ let () =
     ~mux:(fun (task, r) ->
       (* all IO happens in the main process *)
       log_run task r ;
-      write_blocks task.params r ;
+      write_blocks task r ;
       progress := !progress + task.estimate ;
       printf "\r%3.0f%%%!" (rational !progress time_estimate *. 100.)) ;
   Out_channel.close runs_file ;
