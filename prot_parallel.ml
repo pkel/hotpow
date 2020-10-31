@@ -189,6 +189,10 @@ module BlockStore : sig
 
   val elements : 'a t -> 'a list
   (** [elements t] returns all block in the store in unspecified order. *)
+
+  val gc : keep:('a -> bool) -> 'a t -> unit
+  (** Garbage collection. [gc ~keep t] drops all blocks [b] from [t], for which
+      [keep b] yields [false]. *)
 end = struct
   type 'a key = {parent: 'a -> block Link.t; this: 'a -> block Link.t}
 
@@ -218,6 +222,10 @@ end = struct
   let mem t = Hashtbl.mem t.by_hash
   let successors t = Hashtbl.find_all t.by_prnt
   let elements t = Hashtbl.fold (fun _k v acc -> v :: acc) t.by_hash []
+
+  let gc ~keep t =
+    Hashtbl.fold (fun h b acc -> if keep b then acc else h :: acc) t.by_hash []
+    |> List.iter (rm t)
 end
 
 let valid_quorum ~config ref quorum =
@@ -296,7 +304,7 @@ end = struct
       || candidate.height = t.head.height
          && VoteStore.(
               progress t.votes candidate.hash > progress t.votes t.head.hash)
-    then (
+    then
       let parent' (a : attached) =
         match get t.attached a.b.parent with
         | Some a -> a
@@ -305,23 +313,30 @@ end = struct
         | None -> raise Not_found in
       let rec parent n a = if n < 1 then a else parent (n - 1) (parent' a) in
       (* Update head and application state *)
-      t.head <- candidate ;
-      try
-        let new_truth = parent t.confirmations t.head in
-        if
-          not
-            Link.(
-              equal t.truth.hash (parent 1 new_truth).hash
-              || equal t.truth.hash new_truth.hash)
-        then
-          Printf.eprintf
-            "WARNING: inconsistency detected (head.height: %i <- %i) \
-             (truth.height: %i <- %i)\n\
-             %!"
-            candidate.height t.head.height t.truth.height new_truth.height ;
-        (* TODO: count inconsistencies *)
-        t.truth <- new_truth
-      with Not_found -> () )
+      let () =
+        t.head <- candidate ;
+        try
+          let new_truth = parent t.confirmations t.head in
+          if
+            not
+              Link.(
+                equal t.truth.hash (parent 1 new_truth).hash
+                || equal t.truth.hash new_truth.hash)
+          then
+            Printf.eprintf
+              "WARNING: inconsistency detected (head.height: %i <- %i) \
+               (truth.height: %i <- %i)\n\
+               %!"
+              candidate.height t.head.height t.truth.height new_truth.height ;
+          (* TODO: count inconsistencies *)
+          t.truth <- new_truth
+        with Not_found -> () in
+      (* garbage collect old attached blocks *)
+      if t.head.height mod 100 = 0 then (
+        let cutoff = t.head.height - 100 in
+        gc ~keep:(fun b -> b.height > cutoff) t.attached ;
+        gc ~keep:(fun b -> b.received_at > cutoff) t.detached ;
+        VoteStore.gc ~keep:(mem t) t.votes )
 
   let rec attach t (to_ : attached) =
     successors t.detached to_.hash
