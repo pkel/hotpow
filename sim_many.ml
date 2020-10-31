@@ -116,10 +116,10 @@ let run_cols : (string * task) Simulator.column list =
 
 let () =
   let open Stdio in
-  let configs = Hashtbl.data tasks in
-  printf "Simulating %i configurations...\n%!" (List.length configs) ;
+  let tasks = Hashtbl.data tasks in
+  printf "Simulating %i configurations...\n%!" (List.length tasks) ;
   let time_estimate =
-    List.fold_left ~init:0 ~f:( + ) (map (fun c -> c.estimate) configs) in
+    List.fold_left ~init:0 ~f:( + ) (map (fun c -> c.estimate) tasks) in
   let progress = ref 0 in
   let io = Simulator.{verbosity= 0} in
   let runs_file = Out_channel.create "output/runs.csv" in
@@ -140,7 +140,7 @@ let () =
       ~f:(fun b -> Out_channel.fprintf block_file "%s\n" (csv_row block_cols b))
       r.blocks ;
     Out_channel.close block_file in
-  let queue = ref configs in
+  let queue = ref tasks in
   printf "%3.0f%%%!" 0. ;
   Parany.run n_cores
     ~demux:(fun () ->
