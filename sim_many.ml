@@ -3,7 +3,7 @@ open Base
 (* TODO read from command line *)
 let n_blocks = 1024
 let n_nodes = 128
-let n_iterations = 100
+let n_iterations = 64
 let n_cores = Cpu.numcores ()
 
 let range a b =
@@ -103,6 +103,8 @@ let () =
          let q1_exp = {q1_uni with delta_dist= Exponential} in
          schedule ~tag:"fixed-quorum" q1_uni ;
          schedule ~tag:"fixed-quorum" q1_exp ;
+         schedule ~tag:"fixed-quorum" {q1_uni with quorum_size= 8} ;
+         schedule ~tag:"fixed-quorum" {q1_exp with quorum_size= 8} ;
          schedule ~tag:"fixed-quorum" {q1_uni with quorum_size= 64} ;
          schedule ~tag:"fixed-quorum" {q1_exp with quorum_size= 64})
 
