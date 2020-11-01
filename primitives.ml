@@ -4,9 +4,26 @@ open Intf
 module Link : Hash = struct
   type 'a t = int
 
-  let hash x = Hashtbl.seeded_hash_param 255 255 42 x
+  let hash x =
+    (* Ocaml's Murmur3 has 32 bit state.
+       It returns a non-negative Ocaml int, so effectively 30 bits.
+       That's not enough for our experiments.
+
+       Probability of hash collision in K runs over k blocks and l bits:
+       p = 1 - (1 - k * (k-1) / 2 / 2^l)^K
+       K = 4800
+       k = 1024
+       l = 30 -> p = 0.90
+       l = 60 -> p = 2.18e-09
+
+       We should be fine for now with two hashes or 60 bit.
+    *)
+    let a = Hashtbl.seeded_hash_param 255 255 42 x
+    and b = Hashtbl.seeded_hash_param 255 255 0 x
+    in (a lsl 30) + b
+
   let equal = ( = )
-  let to_string = Printf.sprintf "%08x"
+  let to_string = Printf.sprintf "0x%015x"
 end
 
 (** Dummy weight hash for proof of work *)
