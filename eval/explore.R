@@ -9,7 +9,7 @@ runs$block.orphan.rate <- with(runs, (blocks.observed - blocks.confirmed) / bloc
 runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.observed)
 
 # aggregate iterations
-runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate) ~
+runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate, mean.interval) ~
                       tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
@@ -125,6 +125,33 @@ axis(side=1, at=unique(fq$pow.scale))
 fq.title(fq)
 legend('bottomleft', title='quorum size', legend = levels(fq$quorum.size),
        col=fq.color, pch=1)
+
+# target-orphan-rate
+####################
+# set target vote orphan rate
+# x: quorum size
+# y: minimal viable block interval
+
+tor <- function(or, ..., latency.model="uniform") {
+  tor.df <- subset(runs.agg, vote.orphan.rate.mean <= or & delta.dist==latency.model)
+  tor.qs <- unique(runs.agg$quorum.size)
+  tor.bi <- sapply(tor.qs, function(x) {
+                     min(subset(tor.df, quorum.size == x)$mean.interval.mean)
+       })
+  plot(tor.qs, tor.bi, log='x', xaxt='n',
+       main=sprintf("max orphan rate: %.3f    ", or),
+       xlab="quorum size", ylab="block interval")
+  axis(side=1, at=tor.qs)
+  cbind(quorum.size = tor.qs, block.interval=tor.bi)
+}
+tor(0.1)
+tor(0.01)
+
+# plot all combinations, put orphan rate as color
+all.df <- subset(runs.agg, delta.dist=="uniform")
+plot(mean.interval.mean ~ quorum.size, data=all.df, ylim=c(100, 300), xaxt='n', log='x')
+axis(side=1, at=unique(all.df$quorum.size))
+# we need more data points!
 
 # empirical block interval
 ##########################
