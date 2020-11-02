@@ -465,8 +465,7 @@ let track_block ~s (b : block) =
     if s.height >= s.target_height && not s.shutdown then (
       s.shutdown <- true ;
       s.scheduler#schedule Shutdown ) )
-  else
-    Printf.eprintf "WARNING: hash collision observed?!"
+  else Printf.eprintf "WARNING: hash collision observed?!"
 
 let simulate io p =
   let s = init ~p in
