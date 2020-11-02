@@ -132,8 +132,16 @@ legend('bottomleft', title='quorum size', legend = levels(fq$quorum.size),
 # x: quorum size
 # y: minimal viable block interval
 
+tor.palette <- colorspace::diverging_hcl(10, palette="Tofino")
+tor.color <- function(or) {
+  mapped <- or / max(or)
+  tor.palette[floor((mapped * 9) + 1)]
+}
+tor.palette
+tor.color(0:2)
+
 tor <- function(or, ..., latency.model="uniform") {
-  tor.df <- subset(runs.agg, vote.orphan.rate.mean <= or & delta.dist==latency.model)
+  tor.df <- subset(runs.agg, vote.orphan.rate.mean <= or & delta.dist==latency.model & tag=="max-orphan-rate")
   tor.qs <- unique(runs.agg$quorum.size)
   tor.bi <- sapply(tor.qs, function(x) {
                      min(subset(tor.df, quorum.size == x)$mean.interval.mean)
@@ -146,12 +154,12 @@ tor <- function(or, ..., latency.model="uniform") {
 }
 tor(0.1)
 tor(0.01)
+tor(0.015)
 
 # plot all combinations, put orphan rate as color
-all.df <- subset(runs.agg, delta.dist=="uniform")
-plot(mean.interval.mean ~ quorum.size, data=all.df, ylim=c(100, 300), xaxt='n', log='x')
+all.df <- subset(runs.agg, delta.dist=="uniform" & tag=="max-orphan-rate")
+plot(mean.interval.mean ~ quorum.size, data=all.df, ylim=c(100, 300), col=tor.color(all.df$vote.orphan.rate.mean), xaxt='n', log='x')
 axis(side=1, at=unique(all.df$quorum.size))
-# we need more data points!
 
 # empirical block interval
 ##########################
