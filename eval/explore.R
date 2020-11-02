@@ -1,3 +1,4 @@
+setwd("../output")
 rm(list = ls())
 
 runs <- read.csv('runs.csv')
@@ -6,6 +7,13 @@ str(runs)
 runs$delta.dist <- as.factor(runs$delta.dist)
 runs$block.orphan.rate <- with(runs, (blocks.observed - blocks.confirmed) / blocks.observed)
 runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.observed)
+
+# aggregate iterations
+runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate) ~
+                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist,
+                      runs,
+                      function (x) c("mean"=mean(x), "sd"=sd(x)))
+runs.agg <- do.call("data.frame", runs.agg)
 
 # list of experiments
 unique(runs$tag)
@@ -17,41 +25,51 @@ unique(runs$tag)
 # x: quorum size
 # y: orphan votes and blocks
 
-add.title <- function(d) {
+fr.title <- function(d) {
   with(d,
        title(main=sprintf("tag: %s    rate: %.1f    delta: %.1f    nodes: %i    blocks: %i",
                           unique(tag), unique(1/pow.scale), unique(delta.vote),
                           unique(n.nodes), unique(n.blocks)
                           )))
 }
-
 fr <- subset(runs, tag=="fixed-rate")
-
-color <- colorspace::rainbow_hcl(length(levels(fr$delta.dist)), alpha=0.3)
-
+fr.color   <- colorspace::rainbow_hcl(length(levels(fr$delta.dist)))
+fr.color.3 <- colorspace::rainbow_hcl(length(levels(fr$delta.dist)), alpha=0.3)
 plot(block.orphan.rate ~ quorum.size,
      data=fr,
      log='x', xaxt='n',
-     col=color[delta.dist],
+     col=fr.color.3[delta.dist],
      ylim=c(0,0.5),
      ylab='block orphan rate',
      xlab='quorum size')
+ignore <- lapply(unique(fr$delta.dist), function (x) {
+                   d <- subset(runs.agg, tag=="fixed-rate" & delta.dist==x)
+                   lines(block.orphan.rate.mean ~ quorum.size, col=fr.color[x], data=d)
+                   lines(block.orphan.rate.mean - block.orphan.rate.sd ~ quorum.size, col=fr.color[x], lty=2, data=d)
+                   lines(block.orphan.rate.mean + block.orphan.rate.sd ~ quorum.size, col=fr.color[x], lty=2, data=d)
+     })
 axis(side=1, at=unique(fr$quorum.size))
-add.title(fr)
+fr.title(fr)
 legend('bottomleft', title='latency model', legend = levels(fr$delta.dist),
-       col=colorspace::adjust_transparency(color, alpha=1), pch=1)
+       col=fr.color, pch=1)
 
 plot(vote.orphan.rate ~ quorum.size,
      data=fr,
      log='x', xaxt='n',
-     col=color[delta.dist],
+     col=fr.color.3[delta.dist],
      ylim=c(0,0.5),
      ylab='vote orphan rate',
      xlab='quorum size')
+ignore <- lapply(unique(fr$delta.dist), function (x) {
+                   d <- subset(runs.agg, tag=="fixed-rate" & delta.dist==x)
+                   lines(vote.orphan.rate.mean ~ quorum.size, col=fr.color[x], data=d)
+                   lines(vote.orphan.rate.mean - vote.orphan.rate.sd ~ quorum.size, col=fr.color[x], lty=2, data=d)
+                   lines(vote.orphan.rate.mean + vote.orphan.rate.sd ~ quorum.size, col=fr.color[x], lty=2, data=d)
+     })
 axis(side=1, at=unique(fr$quorum.size))
-add.title(fr)
+fr.title(fr)
 legend('bottomleft', title='latency model', legend = levels(fr$delta.dist),
-       col=colorspace::adjust_transparency(color, alpha=1), pch=1)
+       col=fr.color, pch=1)
 
 # fixed-quorum experiment
 #########################
@@ -59,7 +77,7 @@ legend('bottomleft', title='latency model', legend = levels(fr$delta.dist),
 # keep quorum size fixed, change pow rate
 # we look for orphan votes and blocks
 
-add.title <- function(d) {
+fq.title <- function(d) {
   with(d,
        title(main=sprintf("tag: %s    delta: %.1f (%s)    nodes: %i    blocks: %i",
                           unique(tag), unique(delta.vote),
@@ -70,31 +88,43 @@ add.title <- function(d) {
 fq <- subset(runs, tag=="fixed-quorum" & delta.dist=="uniform")
 fq$quorum.size <- as.factor(fq$quorum.size)
 
-color <- colorspace::rainbow_hcl(length(levels(fq$quorum.size)), alpha=0.3)
-
+fq.color   <- colorspace::rainbow_hcl(length(levels(fq$quorum.size)))
+fq.color.3 <- colorspace::rainbow_hcl(length(levels(fq$quorum.size)), alpha=0.3)
 plot(block.orphan.rate ~ pow.scale,
      data=fq,
      log='xy', xaxt='n',
-     col=color[quorum.size],
+     col=fq.color.3[quorum.size],
      ylim=c(10^-4,1),
      ylab='block orphan rate',
      xlab='expected puzzle solving time')
+ignore <- lapply(unique(fq$quorum.size), function (x) {
+                   d <- subset(runs.agg, tag=="fixed-quorum" & delta.dist=="uniform" & quorum.size==x)
+                   lines(block.orphan.rate.mean ~ pow.scale, col=fq.color[x], data=d)
+                   lines(block.orphan.rate.mean - block.orphan.rate.sd ~ pow.scale, col=fq.color[x], lty=2, data=d)
+                   lines(block.orphan.rate.mean + block.orphan.rate.sd ~ pow.scale, col=fq.color[x], lty=2, data=d)
+     })
 axis(side=1, at=unique(fq$pow.scale))
-add.title(fq)
+fq.title(fq)
 legend('bottomleft', title='quorum size', legend = levels(fq$quorum.size),
-       col=colorspace::adjust_transparency(color, alpha=1), pch=1)
+       col=fq.color, pch=1)
 
 plot(vote.orphan.rate ~ pow.scale,
      data=fq,
      log='xy', xaxt='n',
-     col=color[quorum.size],
+     col=fq.color.3[quorum.size],
      ylim=c(10^-4,1),
      ylab='vote orphan rate',
      xlab='expected puzzle solving time')
+ignore <- lapply(unique(fq$quorum.size), function (x) {
+                   d <- subset(runs.agg, tag=="fixed-quorum" & delta.dist=="uniform" & quorum.size==x)
+                   lines(vote.orphan.rate.mean ~ pow.scale, col=fq.color[x], data=d)
+                   lines(vote.orphan.rate.mean - vote.orphan.rate.sd ~ pow.scale, col=fq.color[x], lty=2, data=d)
+                   lines(vote.orphan.rate.mean + vote.orphan.rate.sd ~ pow.scale, col=fq.color[x], lty=2, data=d)
+     })
 axis(side=1, at=unique(fq$pow.scale))
-add.title(fq)
+fq.title(fq)
 legend('bottomleft', title='quorum size', legend = levels(fq$quorum.size),
-       col=colorspace::adjust_transparency(color, alpha=1), pch=1)
+       col=fq.color, pch=1)
 
 # empirical block interval
 ##########################
@@ -143,21 +173,23 @@ ebi <- function(q, s, ..., latency.model="uniform") {
        dgamma(ebi.dinterval$x, shape=q, scale=s),
        col=2, type='l',
        xlab="block interval",
-       ylab="probability density")
+       ylab="estimated probability density")
   lines(ebi.dinterval, col=1)
+  abline(v=q * s, col=2, lty=2)
+  abline(v=mean(ebi.intervals), col=1, lty=2)
   title(main=sprintf("quorum size: %i    log2(pow scale): %i    delta: %.1f (%s)", q, log2(s), ebi.delta, latency.model),
         xlab="block interval")
   legend("topright", c("observed", "theoretical (delta: 0)"), col=1:2, lty=1)
 }
-ebi(8, 2^0)
 
-# investigating bug
-# in scale=2^-2 * delta uniform run 27 we observe that block 166 overwrite block 400 something
-# I suspect a problem with the garbage collector.
-# After investigating, I suspect a hash collision.
-
-broken <- read.block.files("34a005a8", 1:64)
-summary(broken)
-
-broken.interval <- tail(order(broken$interval), n=5)
-broken[broken.interval, ]
+# ebi(8, 2^-3)
+# ebi(8, 2^-2)
+# ebi(8, 2^-1)
+# ebi(8, 2^0)
+# ebi(8, 2^1)
+# ebi(8, 2^2)
+# ebi(8, 2^3)
+# ebi(8, 2^4)
+# ebi(8, 2^5)
+# ebi(8, 2^6)
+# ebi(8, 2^7)
