@@ -53,7 +53,8 @@ include struct
     ; quorum_size: int [@default 8] [@aka ["q"]]  (** Set the quorum size. *)
     ; pow_scale: float [@default 1.]
           (** Set the expected puzzle solving time, i.e. the scale of the
-              exponential distribution driving proof-of-work. *)
+              exponential distribution driving proof-of-work. In case of
+              difficulty adjustment, this is used as start value. *)
     ; strategy: strategy [@default Parallel] [@aka ["s"]] [@enum strategy_enum]
           (** Set the attacker's strategy. *)
     ; alpha: float [@default 1. /. 16.] [@aka ["a"]]
@@ -65,6 +66,12 @@ include struct
           (** Set the expected vote propagation delay. *)
     ; delta_block: float [@default 0.]
           (** Set the expected block propagation delay. *)
+    ; orphan_rate: float option
+          (** Enable difficulty adjustment (moving average) and target the given
+              vote orphan rate. *)
+    ; da_window: int [@default 32]
+          (** Difficulty adjustment is based on the intervals of the last
+              [da-window] confirmed blocks. *)
     ; eclipse_time: float [@default 10.]
           (** Set how long (multiple of expected block time) nodes are eclipsed
               from the network. Messages sent by or delivered to eclipsed nodes
@@ -102,6 +109,10 @@ let check_params p =
     if p.churn < 0. || p.churn > 1. then fail "churn" "must be in [0,1]" ;
     if p.leader_failure_rate < 0. || p.leader_failure_rate > 1. then
       fail "leader-failure-rate" "must be in [0,1]" ;
+    ( match p.orphan_rate with
+    | Some r when r < 0. || r >= 1. -> fail "orphan-rate" "must be in [0, 1)"
+    | _ -> () ) ;
+    if p.da_window < 1 then fail "da-window" "must be > 0" ;
     Ok p
   with Failure m -> Error m
 
@@ -125,7 +136,8 @@ type result =
   ; votes_confirmed: int
   ; mean_interval: float
   ; blocks: sim_block list
-  ; votes: sim_vote list }
+  ; votes: sim_vote list
+  ; pow_scale: float }
 
 type 'a column = {title: string; f: 'a -> string}
 
@@ -148,7 +160,7 @@ let cols : row column list =
   [ {title= "protocol"; f= (fun x -> s x.p.protocol)}
   ; {title= "confirmations"; f= (fun x -> i x.p.confirmations)}
   ; {title= "quorum.size"; f= (fun x -> i x.p.quorum_size)}
-  ; {title= "pow.scale"; f= (fun x -> f x.p.pow_scale)}
+  ; {title= "pow.scale"; f= (fun x -> f x.r.pow_scale)}
   ; {title= "n.blocks"; f= (fun x -> i x.p.n_blocks)}
   ; {title= "n.nodes"; f= (fun x -> i x.p.n_nodes)}
   ; {title= "alpha"; f= (fun x -> f x.p.alpha)}
@@ -229,6 +241,7 @@ end
 
 type state =
   { mutable height: int
+  ; mutable pow_scale: float
   ; mutable atv_cnt: int
   ; mutable shutdown: bool
   ; attacker_id: DSA.public_key
@@ -239,7 +252,10 @@ type state =
   ; blocks: sim_block BlockStore.t
         (* TODO this could be a (block Link.t, sim_block) Hashtbl.t *)
   ; votes: (vote, sim_vote) Hashtbl.t
-  ; mutable head: block Link.t }
+  ; mutable head: block Link.t
+  ; da_vote_cnts: float array
+        (* count votes for last [p.da_window + p.confirmations] block heights *)
+  }
 
 let rec eclipse_random_node till nodes =
   (* Pick a node but not the attacker *)
@@ -250,7 +266,7 @@ let rec eclipse_random_node till nodes =
 
 (* Get time of next ATV and assign random ATV recipient. *)
 let schedule_atv ~p ~s =
-  let delay = draw Exponential p.pow_scale
+  let delay = draw Exponential s.pow_scale
   and node =
     if Random.float 1. <= p.alpha then 0
     else Random.int (Array.length s.nodes - 1) + 1 in
@@ -379,7 +395,8 @@ let result ~p ~s : result =
   ; votes_observed= List.length votes
   ; mean_interval= last_publication /. float_of_int blocks_confirmed
   ; blocks
-  ; votes }
+  ; votes
+  ; pow_scale= s.pow_scale }
 
 let init ~p =
   let attacker_id, attacker_secret = DSA.id_of_int 0
@@ -403,6 +420,12 @@ let init ~p =
         eclipse_random_node (float_of_int n *. d) nodes ;
         eclipse (n - 1) ) in
     eclipse n in
+  let da_vote_cnts =
+    (* initialize the DA array as if target orphan rate would be actual orphan
+       rate *)
+    let orphan_rate = match p.orphan_rate with Some x -> x | None -> 0. in
+    let should_observe = float_of_int p.quorum_size /. (1. -. orphan_rate) in
+    Array.make (p.da_window + p.confirmations) should_observe in
   { height= 0
   ; atv_cnt= 0
   ; shutdown= false
@@ -411,6 +434,8 @@ let init ~p =
   ; target_height= p.n_blocks + p.confirmations
   ; nodes
   ; scheduler
+  ; pow_scale= p.pow_scale
+  ; da_vote_cnts
   ; blocks=
       BlockStore.create
         {parent= (fun (x : sim_block) -> x.data.parent); this= (fun x -> x.hash)}
@@ -432,19 +457,36 @@ let height blockstore parent =
   | None -> None
 
 let track_vote ~s (v : vote) =
-  if not (Hashtbl.mem s.votes v) then
+  if not (Hashtbl.mem s.votes v) then (
+    let target_height =
+      let parent, _, _ = v in
+      match height s.blocks parent with
+      | Some x -> x
+      | None -> failwith "invalid parent in vote broadcast" in
     let sv =
-      { data= v
-      ; published_at= s.scheduler#now
-      ; confirmed= false
-      ; target_height=
-          (let parent, _, _ = v in
-           match height s.blocks parent with
-           | Some x -> x
-           | None -> failwith "invalid parent in vote broadcast") } in
-    Hashtbl.add s.votes v sv
+      {data= v; published_at= s.scheduler#now; confirmed= false; target_height}
+    and da_i = target_height mod Array.length s.da_vote_cnts in
+    Hashtbl.add s.votes v sv ;
+    s.da_vote_cnts.(da_i) <- s.da_vote_cnts.(da_i) +. 1. )
 
-let track_block ~s (b : block) =
+let adjust_difficulty ~p ~s =
+  match p.orphan_rate with
+  | None -> ()
+  | Some r ->
+      let observed = ref 0. in
+      let () =
+        let m = Array.length s.da_vote_cnts in
+        let lower = s.height - p.confirmations - p.da_window + 1 + m
+        and upper = s.height - p.confirmations + m in
+        let () = s.da_vote_cnts.((s.height + 1) mod m) <- 0. in
+        for height = lower to upper do
+          observed := !observed +. s.da_vote_cnts.(height mod m)
+        done in
+      let observed = !observed /. float_of_int p.da_window
+      and should_observe = float_of_int p.quorum_size /. (1. -. r) in
+      s.pow_scale <- p.pow_scale *. should_observe /. observed
+
+let track_block ~p ~s (b : block) =
   let hash = Link.hash b and parent = b.parent in
   if not (BlockStore.mem s.blocks hash) then (
     let height =
@@ -460,7 +502,8 @@ let track_block ~s (b : block) =
     (* update head? *)
     if height > s.height then (
       s.height <- height ;
-      s.head <- hash ) ;
+      s.head <- hash ;
+      adjust_difficulty ~s ~p ) ;
     (* shutdown ? *)
     if s.height >= s.target_height && not s.shutdown then (
       s.shutdown <- true ;
@@ -477,7 +520,7 @@ let simulate io p =
     let t, e = s.scheduler#next in
     let () =
       match e with
-      | Net (Broadcast {m= Block b; _}) -> track_block ~s b
+      | Net (Broadcast {m= Block b; _}) -> track_block ~p ~s b
       | Net (Broadcast {m= Vote v; _}) -> track_vote ~s v
       | _ -> () in
     handle_event ~p ~s e ; log t e
