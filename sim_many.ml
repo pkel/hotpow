@@ -1,9 +1,12 @@
 open Base
 
 (* TODO read from command line *)
-let n_blocks = 1024
-let n_nodes = 128
-let n_iterations = 64
+(* let n_blocks = 1024 *)
+(* let n_nodes = 128 *)
+(* let n_iterations = 64 *)
+let n_blocks = 512
+let n_nodes = 32
+let n_iterations = 32
 let n_cores = Cpu.numcores ()
 
 let range a b =
