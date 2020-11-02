@@ -108,6 +108,33 @@ let () =
          schedule ~tag:"fixed-quorum" {q1_uni with quorum_size= 64} ;
          schedule ~tag:"fixed-quorum" {q1_exp with quorum_size= 64})
 
+let () =
+  (* set orphan rate and quorum size investigate minimum viable block interval *)
+  let open Simulator in
+  range 0 8
+  |> map (fun x -> 1 lsl x)
+  |> iter (fun quorum_size ->
+         iter
+           (fun interval ->
+             let cfg =
+               { n_nodes
+               ; n_blocks
+               ; protocol= Parallel
+               ; quorum_size
+               ; confirmations= 32
+               ; pow_scale= rational interval quorum_size
+               ; delta_dist= Uniform
+               ; delta_vote= 1.
+               ; delta_block= 1.
+               ; leader_failure_rate= 0.
+               ; churn= 0.
+               ; eclipse_time= 10.
+               ; (* Attacker *)
+                 alpha= rational 1 n_nodes
+               ; strategy= Parallel } in
+             schedule ~tag:"max-orphan-rate" cfg)
+           [100; 125; 150; 175; 200; 225; 250; 275; 300])
+
 let run_cols : (string * task) Simulator.column list =
   let open Simulator.ToString in
   [ {title= "tag"; f= fst}
