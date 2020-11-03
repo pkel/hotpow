@@ -5,6 +5,7 @@ lib: [
 ]
 bin: [
   "_build/install/default/bin/many"
+  "_build/install/default/bin/oo"
   "_build/install/default/bin/powsim"
 ]
 doc: [
