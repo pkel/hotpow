@@ -75,9 +75,6 @@ let () =
            ; leader_failure_rate= 0.
            ; churn= 0.
            ; eclipse_time= 10.
-           ; (* Difficulty Adjustment *)
-             orphan_rate= None
-           ; da_window= 32
            ; (* Attacker *)
              alpha= rational 1 n_nodes
            ; strategy= Parallel } in
@@ -103,9 +100,6 @@ let () =
            ; leader_failure_rate= 0.
            ; churn= 0.
            ; eclipse_time= 10.
-           ; (* Difficulty Adjustment *)
-             orphan_rate= None
-           ; da_window= 32
            ; (* Attacker *)
              alpha= rational 1 n_nodes
            ; strategy= Parallel } in
@@ -138,9 +132,6 @@ let () =
                ; leader_failure_rate= 0.
                ; churn= 0.
                ; eclipse_time= 10.
-               ; (* Difficulty Adjustment *)
-                 orphan_rate= None
-               ; da_window= 32
                ; (* Attacker *)
                  alpha= rational 1 n_nodes
                ; strategy= Parallel } in
