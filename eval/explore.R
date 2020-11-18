@@ -1,6 +1,50 @@
 setwd("../output")
 rm(list = ls())
 
+# preamble
+##########
+
+tikz <- function(formula, name, ..., data=NULL, meta=list(), reorder=T, digits=5) {
+  dir.create("../output/tex", showWarnings=F)
+  fname <- sprintf("../output/tex/%s.tex", name)
+  con <- file(fname, open="w")
+  writeLines(paste("% R-generated plot:", name), con=con)
+  mf <- model.frame(formula, data=data)
+  y <- mf[[1]]
+  x <- mf[[2]]
+  if (!is.matrix(y)) {
+    y <- cbind(y=y)
+  }
+  if (!is.matrix(x)) {
+    x <- cbind(x=x)
+  }
+  stopifnot(ncol(x)==1)
+  x <- round(x, digits)
+  y <- round(y, digits)
+  dict <- meta
+  dict$xLab <- colnames(x)[1]
+  dict$minX <- min(x)
+  dict$maxX <- max(x)
+  dict$minY <- min(y)
+  dict$maxY <- max(y)
+  for ( j in  1:ncol(y) ) {
+    vx <- x[, 1]
+    vy <- y[, j]
+    if (reorder) {
+      k <- order(vx)
+      vx <- vx[k]
+      vy <- vy[k]
+    }
+    path <- paste0("(", vx, ",", vy, ")", collapse=" -- ")
+    dict[colnames(y)[j]] <- sprintf("\\path %s;", path)
+  }
+  writeLines(paste0("\\def\\", names(dict), "{", dict, "}"), con=con)
+  close(con)
+}
+
+# load data
+###########
+
 runs <- read.csv('runs.csv')
 str(runs)
 
@@ -10,10 +54,11 @@ runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.o
 
 # aggregate iterations
 runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate, mean.interval) ~
-                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist,
+                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
 runs.agg <- do.call("data.frame", runs.agg)
+runs.agg$n.iterations <- nrow(runs) / nrow(runs.agg)
 
 # list of experiments
 unique(runs$tag)
@@ -70,6 +115,24 @@ axis(side=1, at=unique(fr$quorum.size))
 fr.title(fr)
 legend('bottomleft', title='latency model', legend = levels(fr$delta.dist),
        col=fr.color, pch=1)
+
+ddist= "uniform"
+fr.tikz <- subset(runs.agg, delta.dist == ddist & tag=="fixed-rate")
+tikz((cbind(mean = block.orphan.rate.mean,
+            lower = block.orphan.rate.mean - block.orphan.rate.sd,
+            upper = block.orphan.rate.mean + block.orphan.rate.sd) ~ cbind(qsize = quorum.size)),
+     name="block-orphans-over-qsize-fast", data=fr.tikz,
+     meta=list(deltaDist = ddist,
+               nNodes = unique(fr.tikz$n.nodes),
+               nBlocks = unique(fr.tikz$n.blocks),
+               nIterations = unique(fr.tikz$n.iterations)
+               ))
+print(fr.tikz)
+tikz((cbind(mean = vote.orphan.rate.mean,
+            lower = vote.orphan.rate.mean - vote.orphan.rate.sd,
+            upper = vote.orphan.rate.mean + vote.orphan.rate.sd) ~ cbind(qsize = quorum.size)),
+     name="vote-orphans-over-qsize-fast", data=fr.tikz,
+     meta=list(deltaDist = ddist))
 
 # fixed-quorum experiment
 #########################
