@@ -174,6 +174,28 @@ fq.title(fq)
 legend('bottomleft', title='quorum size', legend = levels(fq$quorum.size),
        col=fq.color, pch=1)
 
+for (d in unique(runs.agg$delta.dist)) {
+  with(subset(runs.agg, delta.dist == d & tag=="fixed-quorum"),
+       pgf(sprintf("orphans-scale-%s", unique(delta.dist)),
+           reshape(data.frame(pow.scale,
+                              log2.pow.scale=log2(pow.scale),
+                              quorum.size,
+                              block.mean = block.orphan.rate.mean,
+                              block.low =  block.orphan.rate.mean - 1.96 * block.orphan.rate.sd,
+                              block.high = block.orphan.rate.mean + 1.96 * block.orphan.rate.sd,
+                              vote.mean = vote.orphan.rate.mean,
+                              vote.low =  vote.orphan.rate.mean - 1.96 * vote.orphan.rate.sd,
+                              vote.high = vote.orphan.rate.mean + 1.96 * vote.orphan.rate.sd),
+                   idvar=c("pow.scale", "log2.pow.scale"),
+                   timevar="quorum.size",
+                   direction="wide"),
+           list(deltaDist = as.character(unique(delta.dist)),
+                qSizes = paste0(sort(unique(quorum.size)), collapse=","),
+                nNodes = unique(n.nodes),
+                nBlocks = unique(n.blocks),
+                nIterations = unique(n.iterations))))
+}
+
 # target-orphan-rate
 ####################
 # set target vote orphan rate
