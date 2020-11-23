@@ -1,17 +1,22 @@
-setwd("../output")
-rm(list = ls())
-
 # preamble
 ##########
 
+setwd("../output")
+rm(list = ls())
+
+if (! dir.exists("../eval/tex")) {
+  dir.create("../eval/tex", recursive=T)
+}
+do.call(file.remove, list(list.files("../eval/tex/", full.names = TRUE)))
+
 pgf <- function(name, data, meta) {
   write.table(data,
-              sprintf("../output/tex/%s.csv", name),
+              sprintf("../eval/tex/%s.csv", name),
               quote=F, sep=",", row.names=F)
   dict <- meta
   dict$name <- name
   writeLines(paste0("\\def\\", names(dict), "{", dict, "}"),
-             con=sprintf("../output/tex/%s.tex", name))
+             con=sprintf("../eval/tex/%s.tex", name))
 }
 
 # load data
@@ -26,7 +31,7 @@ runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.o
 
 # aggregate iterations
 runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate, mean.interval) ~
-                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks,
+                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
 runs.agg <- do.call("data.frame", runs.agg)
@@ -34,6 +39,18 @@ runs.agg$n.iterations <- nrow(runs) / nrow(runs.agg)
 
 # list of experiments
 unique(runs$tag)
+
+uniq.or.fail <- function (v) {
+  uv <- unique(v)
+  return (ifelse(length(uv) == 1, uv, "\\NotUnique"))
+}
+pgf("all",
+    runs.agg,
+    with(runs.agg,
+         list(nNodes = uniq.or.fail(n.nodes),
+              nBlocks = uniq.or.fail(n.blocks),
+              nConfirmations = uniq.or.fail(confirmations),
+              nIterations = uniq.or.fail(n.iterations))))
 
 # fixed-rate experiment
 #######################
@@ -91,8 +108,8 @@ legend('bottomleft', title='latency model', legend = levels(fr$delta.dist),
 
 with(subset(runs.agg, delta.dist == "uniform" & tag=="fixed-rate"),
      pgf("orphans-qsize-fast-uniform",
-         cbind(qsize= quorum.size,
-               log2qsize = log2(quorum.size),
+         cbind(quorum.size,
+               log2.quorum.size = log2(quorum.size),
                block.mean = block.orphan.rate.mean,
                block.low =  block.orphan.rate.mean - 1.96 * block.orphan.rate.sd,
                block.high = block.orphan.rate.mean + 1.96 * block.orphan.rate.sd,
@@ -106,8 +123,8 @@ with(subset(runs.agg, delta.dist == "uniform" & tag=="fixed-rate"),
 
 with(subset(runs.agg, delta.dist == "exponential" & tag=="fixed-rate"),
      pgf("orphans-qsize-fast-exponential",
-         cbind(qsize= quorum.size,
-               log2qsize = log2(quorum.size),
+         cbind(quorum.size,
+               log2.quorum.size = log2(quorum.size),
                block.mean = block.orphan.rate.mean,
                block.low =  block.orphan.rate.mean - 1.96 * block.orphan.rate.sd,
                block.high = block.orphan.rate.mean + 1.96 * block.orphan.rate.sd,
