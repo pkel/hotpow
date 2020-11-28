@@ -4,6 +4,7 @@ lib: [
   "_build/install/default/lib/hotpow/opam"
 ]
 bin: [
+  "_build/install/default/bin/lazysim"
   "_build/install/default/bin/many"
   "_build/install/default/bin/oo"
   "_build/install/default/bin/powsim"
