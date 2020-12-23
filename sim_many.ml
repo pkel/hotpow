@@ -4,6 +4,7 @@ open Base
 let n_blocks = 1024
 let n_nodes = 128
 let n_iterations = 64
+let n_confirmations = 32
 let n_cores = Cpu.numcores ()
 
 let range a b =
@@ -64,7 +65,7 @@ let () =
            ; n_blocks
            ; protocol= Parallel
            ; quorum_size
-           ; confirmations= 32
+           ; confirmations= n_confirmations
            ; pow_scale= 1.
            ; delta_dist= Uniform
            ; delta_vote= 1.
@@ -89,7 +90,7 @@ let () =
            ; n_blocks
            ; protocol= Parallel
            ; quorum_size= 1
-           ; confirmations= 32
+           ; confirmations= n_confirmations
            ; pow_scale= rational speed (1 lsl 3)
            ; delta_dist= Uniform
            ; delta_vote= 1.
