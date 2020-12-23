@@ -4,19 +4,19 @@
 setwd("../output")
 rm(list = ls())
 
-if (! dir.exists("../eval/tex")) {
-  dir.create("../eval/tex", recursive=T)
+if (! dir.exists("../eval/plots")) {
+  dir.create("../eval/plots", recursive=T)
 }
-do.call(file.remove, list(list.files("../eval/tex/", full.names = TRUE)))
+do.call(file.remove, list(list.files("../eval/plots/", full.names = TRUE)))
 
 pgf <- function(name, data, meta) {
   write.table(data,
-              sprintf("../eval/tex/%s.csv", name),
+              sprintf("../eval/plots/%s.csv", name),
               quote=F, sep=",", row.names=F)
   dict <- meta
   dict$name <- name
   writeLines(paste0("\\def\\", names(dict), "{", dict, "}"),
-             con=sprintf("../eval/tex/%s.tex", name))
+             con=sprintf("../eval/plots/%s.tex", name))
 }
 
 # load data
