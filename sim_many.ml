@@ -55,10 +55,10 @@ let schedule ~tag params =
     (range 1 n_iterations)
 
 let () =
-  (* keep 1 atv per 1 delta fixed, scale quorum size, investigate orphans *)
+  (* keep 1 atv per 2 delta fixed, scale quorum size, investigate orphans *)
   let open Simulator in
   range 0 8
-  |> map (fun x -> 1 lsl x)
+  |> map (fun x -> 1 lsl x) (* 1 ... 256 *)
   |> iter (fun quorum_size ->
          let uni =
            { n_nodes
@@ -66,7 +66,7 @@ let () =
            ; protocol= Parallel
            ; quorum_size
            ; confirmations= n_confirmations
-           ; pow_scale= 1.
+           ; pow_scale= 2.
            ; delta_dist= Uniform
            ; delta_vote= 1.
            ; delta_block= 1.
@@ -82,8 +82,8 @@ let () =
 let () =
   (* keep quorum size fixed, speed up pow, investigate orphans *)
   let open Simulator in
-  range 0 10
-  |> map (fun x -> 1 lsl x)
+  range 0 8
+  |> map (fun x -> 1 lsl x) (* 1 ... 256 *)
   |> iter (fun speed ->
          let q1_uni =
            { n_nodes
@@ -91,7 +91,7 @@ let () =
            ; protocol= Parallel
            ; quorum_size= 1
            ; confirmations= n_confirmations
-           ; pow_scale= rational speed (1 lsl 3)
+           ; pow_scale= rational speed 2 (* 0.5 ... 128 *)
            ; delta_dist= Uniform
            ; delta_vote= 1.
            ; delta_block= 1.
