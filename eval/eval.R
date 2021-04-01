@@ -38,7 +38,7 @@ runs.agg <- do.call("data.frame", runs.agg)
 runs.agg$n.iterations <- nrow(runs) / nrow(runs.agg)
 
 # list of experiments
-unique(runs$tag)
+# unique(runs$tag)
 
 uniq.or.fail <- function (v) {
   uv <- unique(v)
@@ -51,6 +51,83 @@ pgf("all",
               nBlocks = uniq.or.fail(n.blocks),
               nConfirmations = uniq.or.fail(confirmations),
               nIterations = uniq.or.fail(n.iterations))))
+
+# empirical block interval
+##########################
+
+block.file <- function(id, iteration) paste0("blocks-",id,"-",iteration,".csv")
+
+# assume fixed number of blocks
+read.block.files <- function(ids, iterations) {
+  # preallocate space
+  blocks <- read.csv(block.file(ids[1], iterations[1]))
+  n_blocks <- max(blocks$height)
+  n_files <- length(iterations) * length(ids)
+  n_rows <- n_files * n_blocks
+  id <- character(n_rows)
+  iteration <- numeric(n_rows)
+  interval <- numeric(n_rows)
+  height <- numeric(n_rows)
+  published.at <- numeric(n_rows)
+  offsets <- matrix(0:(n_files - 1) * n_blocks, nrow=length(ids), ncol=length(iterations))
+  for (i in 1:length(ids)) {
+    for (j in 1:length(iterations)) {
+      blocks <- read.csv(block.file(ids[i], iterations[j]))
+      o <- order(blocks$published.at)[as.logical(blocks$confirmed)]
+      k <- 1:n_blocks + offsets[i,j]
+      stopifnot(length(k) == n_blocks)
+      id[k] = ids[i]
+      iteration[k] = iterations[j]
+      interval[k] = diff(c(0,blocks$published.at[o]))
+      published.at[k] = blocks$published.at[o]
+      height[k] = blocks$height[o]
+    }
+  }
+  data.frame(id, iteration, interval, published.at, height)
+}
+
+ebi <- function(t) {
+  ebi.runs <- subset(runs, tag == t)
+  s <- unique(ebi.runs$pow.scale)
+  q <- unique(ebi.runs$quorum.size)
+  l <- unique(ebi.runs$delta.dist)
+  stopifnot(length(s) == 1)
+  stopifnot(length(q) == 1)
+  stopifnot(length(l) == 1)
+  ebi.id <- unique(ebi.runs$id)
+  stopifnot(length(ebi.id)==1)
+  ebi.delta <- unique(ebi.runs$delta.vote)
+  stopifnot(length(ebi.delta)==1)
+  ebi.data <- read.block.files(ebi.id, unique(ebi.runs$iteration))
+  ebi.intervals <- ebi.data$interval
+  ebi.dinterval <- density(ebi.intervals, from=min(ebi.intervals))
+  hist(ebi.intervals, probability=T, main="", xlab="", las=1, nclass=20)
+  lines(ebi.dinterval$x,
+        dgamma(ebi.dinterval$x, shape=q, scale=s),
+        col=2, type='l')
+  # lines(ebi.dinterval, col=1)
+  abline(v=q * s, col=2, lty=2)
+  abline(v=mean(ebi.intervals), col=1, lty=2)
+  title(main=t,
+        xlab="block interval")
+  legend("topright",
+         c("observation", "Gamma distribution", "observed mean", "target interval"),
+         col=c(1,2,1,2), lty=c(1,1,2,2))
+}
+if (interactive()) {
+  ebi("block-interval-exponential-nc-fast")
+  ebi("block-interval-exponential-proposed")
+  ebi("block-interval-exponential-nc-slow")
+} else {
+  for (tag in unique(runs$tag)) {
+    if (startsWith(tag, "block-interval-")) {
+      print(paste0(tag,".pdf"))
+      cairo_pdf(paste0("../eval/plots/", tag,".pdf"), width=7, height=4)
+      ebi(tag)
+      dev.off()
+    }
+  }
+}
 
 # fixed-rate experiment
 #######################
@@ -212,71 +289,3 @@ for (d in unique(runs.agg$delta.dist)) {
                 nBlocks = unique(n.blocks),
                 nIterations = unique(n.iterations))))
 }
-
-# empirical block interval
-##########################
-
-block.file <- function(id, iteration) paste0("blocks-",id,"-",iteration,".csv")
-
-# assume fixed number of blocks
-read.block.files <- function(ids, iterations) {
-  # preallocate space
-  blocks <- read.csv(block.file(ids[1], iterations[1]))
-  n_blocks <- max(blocks$height)
-  n_files <- length(iterations) * length(ids)
-  n_rows <- n_files * n_blocks
-  id <- character(n_rows)
-  iteration <- numeric(n_rows)
-  interval <- numeric(n_rows)
-  height <- numeric(n_rows)
-  published.at <- numeric(n_rows)
-  offsets <- matrix(0:(n_files - 1) * n_blocks, nrow=length(ids), ncol=length(iterations))
-  for (i in 1:length(ids)) {
-    for (j in 1:length(iterations)) {
-      blocks <- read.csv(block.file(ids[i], iterations[j]))
-      o <- order(blocks$published.at)[as.logical(blocks$confirmed)]
-      k <- 1:n_blocks + offsets[i,j]
-      stopifnot(length(k) == n_blocks)
-      id[k] = ids[i]
-      iteration[k] = iterations[j]
-      interval[k] = diff(c(0,blocks$published.at[o]))
-      published.at[k] = blocks$published.at[o]
-      height[k] = blocks$height[o]
-    }
-  }
-  data.frame(id, iteration, interval, published.at, height)
-}
-
-ebi <- function(q, s, ..., latency.model="uniform") {
-  ebi.runs <- subset(runs, delta.dist==latency.model & quorum.size == q & pow.scale == s & tag == "fixed-quorum")
-  ebi.id <- unique(ebi.runs$id)
-  stopifnot(length(ebi.id)==1)
-  ebi.delta <- unique(c(ebi.runs$delta.vote, ebi.runs$delta.vote))
-  stopifnot(length(ebi.delta)==1)
-  ebi.data <- read.block.files(ebi.id, unique(ebi.runs$iteration))
-  ebi.intervals <- ebi.data$interval
-  ebi.dinterval <- density(ebi.intervals, from=min(ebi.intervals))
-  plot(ebi.dinterval$x,
-       dgamma(ebi.dinterval$x, shape=q, scale=s),
-       col=2, type='l',
-       xlab="block interval",
-       ylab="estimated probability density")
-  lines(ebi.dinterval, col=1)
-  abline(v=q * s, col=2, lty=2)
-  abline(v=mean(ebi.intervals), col=1, lty=2)
-  title(main=sprintf("quorum size: %i    log2(pow scale): %i    delta: %.1f (%s)", q, log2(s), ebi.delta, latency.model),
-        xlab="block interval")
-  legend("topright", c("observed", "theoretical (delta: 0)"), col=1:2, lty=1)
-}
-
-# ebi(8, 2^-3)
-# ebi(8, 2^-2)
-# ebi(8, 2^-1)
-# ebi(8, 2^0)
-# ebi(8, 2^1)
-# ebi(8, 2^2)
-# ebi(8, 2^3)
-# ebi(8, 2^4)
-# ebi(8, 2^5)
-# ebi(8, 2^6)
-# ebi(8, 2^7)

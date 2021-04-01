@@ -2,8 +2,8 @@ open Base
 
 (* TODO read from command line *)
 let n_blocks = 1024
-let n_nodes = 128
-let n_iterations = 64
+let n_nodes = 32 (* 1024 *)
+let n_iterations = 16 (* 64 *)
 let n_confirmations = 32
 let n_cores = Cpu.numcores ()
 
@@ -12,7 +12,7 @@ let range a b =
   r [] b
 
 let map f l = List.map ~f l
-let iter f l = List.iter ~f l
+let iter l f = List.iter ~f l
 let foldl f init l = List.fold_left ~f ~init l
 let rational a b = Float.of_int a /. Float.of_int b
 
@@ -42,7 +42,7 @@ let check_params ~tag p =
 let schedule ~tag params =
   let () = check_params ~tag params in
   let id = Simulator.hash_params params in
-  iter
+  iter (range 1 n_iterations)
     (fun iteration ->
       let hash = Hashable.hash (id, iteration) in
       match Hashtbl.find tasks hash with
@@ -52,62 +52,110 @@ let schedule ~tag params =
           in
           Hashtbl.set tasks ~key:hash ~data
       | Some ct -> ct.tags <- tag :: ct.tags)
-    (range 1 n_iterations)
 
-let () =
-  (* keep 1 atv per 2 delta fixed, scale quorum size, investigate orphans *)
-  let open Simulator in
-  range 0 8
-  |> map (fun x -> 1 lsl x) (* 1 ... 256 *)
-  |> iter (fun quorum_size ->
-         let uni =
-           { n_nodes
-           ; n_blocks
-           ; protocol= Parallel
-           ; quorum_size
-           ; confirmations= n_confirmations
-           ; pow_scale= 2.
-           ; delta_dist= Uniform
-           ; delta_vote= 1.
-           ; delta_block= 1.
-           ; leader_failure_rate= 0.
-           ; churn= 0.
-           ; eclipse_time= 10.
-           ; (* Attacker *)
-             alpha= rational 1 n_nodes
-           ; strategy= Parallel } in
-         schedule ~tag:"fixed-rate" uni ;
-         schedule ~tag:"fixed-rate" {uni with delta_dist= Exponential})
+(* synchrony assumption: Δ = 2s *)
+let synchrony = 2.
 
+(* Three configuration:
+ * - k = 51, lambda = k/600 , votes 250ms, blocks 2s
+ * - k = 1 , lambda = k/600 , votes n/a  , blocks 2s
+ * - k = 1 , lambda = 51/600, votes n/a  , blocks 500ms
+ *)
+
+let scenarios =
+  [ "proposed", 51, rational 600 51, synchrony /. 8., synchrony
+  ; "nc-slow",   1, rational 600  1, synchrony      , synchrony
+  ; "nc-fast",   1, rational 600 51, synchrony      , synchrony /. 4.
+  ]
+
+(* Analyse distribution of block interval in finalized chain for δ = Δ.
+ * I expect a gamma distribution with shape k.
+ * Orphans will induce a visible deviation for the fast-nc scenario.
+ *)
 let () =
-  (* keep quorum size fixed, speed up pow, investigate orphans *)
   let open Simulator in
-  range 0 8
-  |> map (fun x -> 1 lsl x) (* 1 ... 256 *)
-  |> iter (fun speed ->
-         let q1_uni =
-           { n_nodes
-           ; n_blocks
-           ; protocol= Parallel
-           ; quorum_size= 1
-           ; confirmations= n_confirmations
-           ; pow_scale= rational speed 2 (* 0.5 ... 128 *)
-           ; delta_dist= Uniform
-           ; delta_vote= 1.
-           ; delta_block= 1.
-           ; leader_failure_rate= 0.
-           ; churn= 0.
-           ; eclipse_time= 10.
-           ; (* Attacker *)
-             alpha= rational 1 n_nodes
-           ; strategy= Parallel } in
-         let q1_exp = {q1_uni with delta_dist= Exponential} in
-         schedule ~tag:"fixed-quorum" q1_uni ;
-         schedule ~tag:"fixed-quorum" q1_exp ;
-         schedule ~tag:"fixed-quorum" {q1_uni with quorum_size= 8} ;
-         schedule ~tag:"fixed-quorum" {q1_exp with quorum_size= 8} ;
-         schedule ~tag:"fixed-quorum" {q1_uni with quorum_size= 64} ;
-         schedule ~tag:"fixed-quorum" {q1_exp with quorum_size= 64})
+  iter scenarios (fun (s, quorum_size, pow_scale, _, _) ->
+      let cfg =
+        { n_nodes
+        ; n_blocks
+        ; protocol= Parallel
+        ; quorum_size
+        ; confirmations= n_confirmations
+        ; pow_scale
+        ; delta_dist = Uniform
+        ; delta_vote= synchrony
+        ; delta_block= synchrony
+        ; leader_failure_rate= 0.
+        ; churn= 0.
+        ; eclipse_time= 10.
+        ; (* Attacker *)
+          alpha= rational 1 n_nodes
+        ; strategy= Parallel
+        }
+      in
+      schedule ~tag:("block-interval-exponential-" ^ s)
+        {cfg with delta_dist=Exponential};
+      schedule ~tag:("block-interval-uniform-" ^ s)
+        {cfg with delta_dist=Uniform}
+    )
+
+(* Analyse orphan rate for varying propagation delays. *)
+let () =
+  let deltas =
+    range 0 6 |> map (fun x -> rational (1 lsl x) 4) (* 1/4 ... 16 *)
+  in
+  let open Simulator in
+  iter deltas (fun d ->
+      iter scenarios (fun (s, quorum_size, pow_scale, _, _) ->
+          let cfg =
+            { n_nodes
+            ; n_blocks
+            ; protocol= Parallel
+            ; quorum_size
+            ; confirmations= n_confirmations
+            ; pow_scale
+            ; delta_dist = Uniform
+            ; delta_vote= d
+            ; delta_block= d
+            ; leader_failure_rate= 0.
+            ; churn= 0.
+            ; eclipse_time= 10.
+            ; (* Attacker *)
+              alpha= rational 1 n_nodes
+            ; strategy= Parallel
+            } in
+          schedule ~tag:("orphan-rate-exponential-" ^ s)
+            { cfg with delta_dist=Exponential};
+          schedule ~tag:("orphan-rate-uniform-" ^ s)
+            { cfg with delta_dist=Uniform}
+        ))
+
+(* Analyse orphan rate for "realistic" propagation delays. *)
+let () =
+  let open Simulator in
+  iter scenarios (fun (s, quorum_size, pow_scale, delta_vote, delta_block) ->
+      let cfg =
+        { n_nodes
+        ; n_blocks
+        ; protocol= Parallel
+        ; quorum_size
+        ; confirmations= n_confirmations
+        ; pow_scale
+        ; delta_dist = Uniform
+        ; delta_vote
+        ; delta_block
+        ; leader_failure_rate= 0.
+        ; churn= 0.
+        ; eclipse_time= 10.
+        ; (* Attacker *)
+          alpha= rational 1 n_nodes
+        ; strategy= Parallel
+        } in
+      schedule ~tag:("realistic-exponential-" ^ s)
+        { cfg with delta_dist=Exponential};
+      schedule ~tag:("realistic-uniform-" ^ s)
+        { cfg with delta_dist=Uniform}
+    )
 
 let run_cols : (string * task) Simulator.column list =
   let open Simulator.ToString in
@@ -130,16 +178,15 @@ let () =
   let log_run t r =
     let a tag = Simulator.csv_row run_cols (tag, t) in
     let b = Simulator.(csv_row cols {p= t.params; r}) in
-    iter (fun tag -> Out_channel.fprintf runs_file "%s,%s\n%!" (a tag) b) t.tags
+    iter t.tags (fun tag -> Out_channel.fprintf runs_file "%s,%s\n%!" (a tag) b)
   and write_blocks t (r : Simulator.result) =
     let open Simulator in
     let block_file =
       Out_channel.create
         (Printf.sprintf "output/blocks-%08x-%i.csv" t.id t.iteration) in
     Out_channel.fprintf block_file "%s\n" (csv_head block_cols) ;
-    List.iter
-      ~f:(fun b -> Out_channel.fprintf block_file "%s\n" (csv_row block_cols b))
-      r.blocks ;
+    iter r.blocks
+      (fun b -> Out_channel.fprintf block_file "%s\n" (csv_row block_cols b));
     Out_channel.close block_file in
   let queue = ref tasks in
   printf "%3.0f%%%!" 0. ;
