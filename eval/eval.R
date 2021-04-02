@@ -38,7 +38,7 @@ runs.agg <- do.call("data.frame", runs.agg)
 runs.agg$n.iterations <- nrow(runs) / nrow(runs.agg)
 
 # list of experiments
-# unique(runs$tag)
+tags <- sort(unique(runs$tag))
 
 uniq.or.fail <- function (v) {
   uv <- unique(v)
@@ -86,6 +86,53 @@ read.block.files <- function(ids, iterations) {
   data.frame(id, iteration, interval, published.at, height)
 }
 
+# summarize all configs in a table
+bi.tags <- tags[startsWith(tags, "block-interval")]
+bi.row.of.tag <- function(tag) {
+  s <- strsplit(sub("^block-interval-", "", tag), "-")[[1]]
+  net <- s[1]
+  cfg <- paste0(tail(s, -1), collapse="-")
+  bi.runs <- runs[runs$tag == tag, ]
+  bi.data <- read.block.files(unique(bi.runs$id), unique(bi.runs$iteration))
+  intervals <- bi.data$interval
+  q <- quantile(intervals, c(0.01, 0.05, 0.5, 0.95, 0.99),
+                names=F)
+  data.frame(net=net, cfg=cfg,
+             mean=mean(intervals), std=sqrt(var(intervals)),
+             q1= q[1], q5= q[2], q50=q[3], q95=q[4], q99=q[5],
+             block.orphan.rate=mean(bi.runs$block.orphan.rate),
+             vote.orphan.rate=mean(bi.runs$vote.orphan.rate))
+}
+bi.stats <- data.frame(do.call(rbind, lapply(bi.tags, bi.row.of.tag)))
+bi.rows <- with(bi.stats,
+                paste(sprintf("\\textbf{%s}", net),
+                      sprintf("\\textbf{%s}", cfg),
+                      sprintf("$%g''$", signif(q1 , 4)),
+                      sprintf("$%g''$", signif(q5 , 4)),
+                      sprintf("$%g''$", signif(q50, 4)),
+                      sprintf("$%g''$", signif(q95, 4)),
+                      sprintf("$%g''$", signif(q99, 4)),
+                      sprintf("$%.4f\\,\\%%$", block.orphan.rate),
+                      sprintf("$%.4f\\,\\%%$", vote.orphan.rate),
+                      sep = " & "))
+bi.lns <- c("\\begin{tabular}{llccccccc}",
+            "\\toprule",
+            "& & \\multicolumn{5}{c}{quantiles} & \\multicolumn{2}{c}{orphan rate} \\\\",
+            "\\cmidrule(lr){3-7} \\cmidrule{8-9}",
+            "network & configuration & 1\\,\\% & 5\\,\\% & 50\\,\\% & 95\\,\\% & 99\\,\\% & block & vote \\\\",
+            "\\midrule",
+            paste(bi.rows, "\\\\"),
+            "\\bottomrule",
+            "\\end{tabular}")
+if(interactive()) {
+  writeLines(bi.lns)
+} else {
+  fname <- "tab-block-interval.tex"
+  print(fname)
+  writeLines(bi.lns, paste0("../eval/plots/", fname))
+}
+
+# plot distribution
 ebi <- function(t) {
   ebi.runs <- subset(runs, tag == t)
   s <- unique(ebi.runs$pow.scale)
@@ -114,20 +161,21 @@ ebi <- function(t) {
          c("observation", "Gamma distribution", "observed mean", "target interval"),
          col=c(1,2,1,2), lty=c(1,1,2,2))
 }
+
 if (interactive()) {
   ebi("block-interval-exponential-nc-fast")
   ebi("block-interval-exponential-proposed")
   ebi("block-interval-exponential-nc-slow")
 } else {
-  for (tag in unique(runs$tag)) {
-    if (startsWith(tag, "block-interval-")) {
-      print(paste0(tag,".pdf"))
-      cairo_pdf(paste0("../eval/plots/", tag,".pdf"), width=7, height=4)
-      ebi(tag)
-      dev.off()
-    }
+  for (tag in bi.tags) {
+    print(paste0(tag,".pdf"))
+    cairo_pdf(paste0("../eval/plots/", tag,".pdf"), width=7, height=4)
+    ebi(tag)
+    dev.off()
   }
 }
+
+stop()
 
 # fixed-rate experiment
 #######################
