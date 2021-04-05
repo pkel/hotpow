@@ -38,7 +38,7 @@ runs.agg <- do.call("data.frame", runs.agg)
 runs.agg$n.iterations <- nrow(runs) / nrow(runs.agg)
 
 # list of experiments
-tags <- sort(unique(runs$tag))
+tags <- sort(unique(runs$tag), decreasing=T)
 
 uniq.or.fail <- function (v) {
   uv <- unique(v)
@@ -89,19 +89,20 @@ read.block.files <- function(ids, iterations) {
   data.frame(id, iteration, interval, published.at, height)
 }
 
-bi.tags <- tags[startsWith(tags, "simplified")]
-
+bi.tags <- tags[startsWith(tags, "simplified") | startsWith(tags, "realistic")]
+#
 # summarize all configs in a table
 bi.row.of.tag <- function(tag) {
-  s <- strsplit(sub("^simplified-", "", tag), "-")[[1]]
-  net <- s[1]
-  cfg <- paste0(tail(s, -1), collapse="-")
+  s <- strsplit(tag, "-")[[1]]
+  net.lat <- s[1]
+  net.dis <- s[2]
+  cfg <- paste0(tail(s, -2), collapse="-")
   bi.runs <- runs[runs$tag == tag, ]
   bi.data <- read.block.files(unique(bi.runs$id), unique(bi.runs$iteration))
   intervals <- bi.data$interval
   q <- quantile(intervals, c(0.01, 0.05, 0.5, 0.95, 0.99),
                 names=F)
-  data.frame(net=net, cfg=cfg,
+  data.frame(net.dis=net.dis, net.lat=net.lat, cfg=cfg,
              mean=mean(intervals), sd=sd(intervals),
              q1= q[1], q5= q[2], q50=q[3], q95=q[4], q99=q[5],
              block.orphan.rate=mean(bi.runs$block.orphan.rate),
@@ -109,7 +110,8 @@ bi.row.of.tag <- function(tag) {
 }
 bi.stats <- data.frame(do.call(rbind, lapply(bi.tags, bi.row.of.tag)))
 bi.rows <- with(bi.stats,
-                paste(sprintf("\\textbf{%s}", net),
+                paste(sprintf("\\textbf{%s}", net.lat),
+                      sprintf("\\textbf{%s}", net.dis),
                       sprintf("\\textbf{%s}", cfg),
                       sprintf("$%g''$", signif(mean, 4)),
                       sprintf("$%g''$", signif(sd  , 4)),
@@ -121,11 +123,11 @@ bi.rows <- with(bi.stats,
                       sprintf("$%.4f\\,\\%%$", block.orphan.rate),
                       sprintf("$%.4f\\,\\%%$", vote.orphan.rate),
                       sep = " & "))
-bi.lns <- c("\\begin{tabular}{llccccccccc}",
+bi.lns <- c("\\begin{tabular}{lllccccccccc}",
             "\\toprule",
-            "& & \\multicolumn{2}{c}{block interval} & \\multicolumn{5}{c}{quantiles} & \\multicolumn{2}{c}{orphan rate} \\\\",
-            "\\cmidrule(lr){3-4} \\cmidrule(lr){5-9} \\cmidrule(l){10-11}",
-            "network & configuration & mean & std.\\,dev. & 1\\,\\% & 5\\,\\% & 50\\,\\% & 95\\,\\% & 99\\,\\% & block & vote \\\\",
+            "\\multicolumn{3}{c}{configuration} & \\multicolumn{2}{c}{block interval} & \\multicolumn{5}{c}{quantiles} & \\multicolumn{2}{c}{orphan rate} \\\\",
+            "\\cmidrule(r){1-3} \\cmidrule(lr){4-5} \\cmidrule(lr){6-10} \\cmidrule(l){11-12}",
+            "latency & distribution & protocol & mean & std.\\,dev. & 1\\,\\% & 5\\,\\% & 50\\,\\% & 95\\,\\% & 99\\,\\% & block & vote \\\\",
             "\\midrule",
             paste(bi.rows, "\\\\"),
             "\\bottomrule",
@@ -185,7 +187,7 @@ if (interactive()) {
   for (tag in bi.tags) {
     fname <- paste0("block-interval-", tag,".pdf")
     print(fname)
-    cairo_pdf(paste0(fname,".pdf"), width=7, height=4)
+    cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
     ebi(tag)
     dev.off()
   }
