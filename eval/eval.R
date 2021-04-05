@@ -89,10 +89,11 @@ read.block.files <- function(ids, iterations) {
   data.frame(id, iteration, interval, published.at, height)
 }
 
+bi.tags <- tags[startsWith(tags, "simplified")]
+
 # summarize all configs in a table
-bi.tags <- tags[startsWith(tags, "block-interval")]
 bi.row.of.tag <- function(tag) {
-  s <- strsplit(sub("^block-interval-", "", tag), "-")[[1]]
+  s <- strsplit(sub("^simplified-", "", tag), "-")[[1]]
   net <- s[1]
   cfg <- paste0(tail(s, -1), collapse="-")
   bi.runs <- runs[runs$tag == tag, ]
@@ -166,18 +167,25 @@ ebi <- function(t) {
          c("observation", "Gamma distribution", "observed mean", "target interval"),
          col=c(1,2,1,2), lty=c(1,1,2,2))
 }
-
+#
 if (interactive()) {
-  ebi("block-interval-exponential-nc-fast")
-  ebi("block-interval-exponential-proposed")
-  ebi("block-interval-exponential-nc-slow")
-  ebi("block-interval-uniform-nc-fast")
-  ebi("block-interval-uniform-proposed")
-  ebi("block-interval-uniform-nc-slow")
+  ebi("simplified-exponential-nc-fast")
+  ebi("simplified-exponential-proposed")
+  ebi("simplified-exponential-nc-slow")
+  ebi("simplified-uniform-nc-fast")
+  ebi("simplified-uniform-proposed")
+  ebi("simplified-uniform-nc-slow")
+  ebi("realistic-exponential-nc-fast")
+  ebi("realistic-exponential-proposed")
+  ebi("realistic-exponential-nc-slow")
+  ebi("realistic-uniform-nc-fast")
+  ebi("realistic-uniform-proposed")
+  ebi("realistic-uniform-nc-slow")
 } else {
   for (tag in bi.tags) {
-    print(paste0(tag,".pdf"))
-    cairo_pdf(paste0("../eval/plots/", tag,".pdf"), width=7, height=4)
+    fname <- paste0("block-interval-", tag,".pdf")
+    print(fname)
+    cairo_pdf(paste0(fname,".pdf"), width=7, height=4)
     ebi(tag)
     dev.off()
   }
@@ -191,10 +199,10 @@ if (interactive()) {
 # x-axis: δ = 1/4 ... 16
 # y-axis: orphan rate blocks + votes for k>1
 
-or.tags <- tags[startsWith(tags, "orphan-rate")]
+or.tags <- tags[startsWith(tags, "varying-simplified")]
 or.df.of.tag <- function(tag) {
   d <- runs.agg[runs.agg$tag == tag, ]
-  s <- strsplit(sub("^orphan-rate-", "", tag), "-")[[1]]
+  s <- strsplit(sub("^varying-simplified-", "", tag), "-")[[1]]
   d$net <- s[1]
   d$cfg <- paste0(tail(s, -1), collapse="-")
   return(d)

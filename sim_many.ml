@@ -3,7 +3,7 @@ open Base
 (* TODO read from command line *)
 let n_blocks = 1024
 let n_nodes = 32 (* 1024 *)
-let n_iterations = 16 (* 64 *)
+let n_iterations = 64
 let n_confirmations = 32
 let n_cores = Cpu.numcores ()
 
@@ -56,7 +56,7 @@ let schedule ~tag params =
 (* synchrony assumption: Δ = 2s *)
 let synchrony = 2.
 
-(* Three configuration:
+(* Three configurations:
  * - k = 51, lambda = k/600 , votes 250ms, blocks 2s
  * - k = 1 , lambda = k/600 , votes n/a  , blocks 2s
  * - k = 1 , lambda = 51/600, votes n/a  , blocks 500ms
@@ -68,38 +68,61 @@ let scenarios =
   ; "nc-fast",   1, rational 600 51, synchrony      , synchrony /. 4.
   ]
 
-(* Analyse distribution of block interval in finalized chain for δ = Δ.
- * I expect a gamma distribution with shape k.
- * Orphans will induce a visible deviation for the fast-nc scenario.
- *)
+(* base config *)
+let base =
+  let open Simulator in
+  { n_nodes
+  ; n_blocks
+  ; protocol= Parallel
+  ; quorum_size = 42
+  ; confirmations= n_confirmations
+  ; pow_scale = synchrony
+  ; delta_dist = Uniform
+  ; delta_vote= synchrony
+  ; delta_block= synchrony
+  ; leader_failure_rate= 0.
+  ; churn= 0.
+  ; eclipse_time= 10.
+  ; (* Attacker *)
+    alpha= rational 1 n_nodes
+  ; strategy= Parallel
+  }
+
+(* All scenarios, simplified networks *)
 let () =
   let open Simulator in
   iter scenarios (fun (s, quorum_size, pow_scale, _, _) ->
       let cfg =
-        { n_nodes
-        ; n_blocks
-        ; protocol= Parallel
-        ; quorum_size
-        ; confirmations= n_confirmations
-        ; pow_scale
-        ; delta_dist = Uniform
-        ; delta_vote= synchrony
-        ; delta_block= synchrony
-        ; leader_failure_rate= 0.
-        ; churn= 0.
-        ; eclipse_time= 10.
-        ; (* Attacker *)
-          alpha= rational 1 n_nodes
-        ; strategy= Parallel
+        { base with quorum_size
+                  ; pow_scale
+                  ; delta_vote= synchrony
+                  ; delta_block= synchrony
         }
       in
-      schedule ~tag:("block-interval-exponential-" ^ s)
+      schedule ~tag:("simplified-exponential-" ^ s)
         {cfg with delta_dist=Exponential};
-      schedule ~tag:("block-interval-uniform-" ^ s)
+      schedule ~tag:("simplified-uniform-" ^ s)
         {cfg with delta_dist=Uniform}
     )
 
-(* Analyse orphan rate for varying propagation delays. *)
+(* All scenarios, realistic networks *)
+let () =
+  let open Simulator in
+  iter scenarios (fun (s, quorum_size, pow_scale, delta_vote, delta_block) ->
+      let cfg =
+        { base with quorum_size
+                  ; pow_scale
+                  ; delta_vote
+                  ; delta_block
+        }
+      in
+      schedule ~tag:("realistic-exponential-" ^ s)
+        { cfg with delta_dist=Exponential};
+      schedule ~tag:("realistic-uniform-" ^ s)
+        { cfg with delta_dist=Uniform}
+    )
+
+(* All scenarios, simplified networks, varying expected latency. *)
 let () =
   let deltas =
     range 0 6 |> map (fun x -> rational (1 lsl x) 4) (* 1/4 ... 16 *)
@@ -108,54 +131,61 @@ let () =
   iter deltas (fun d ->
       iter scenarios (fun (s, quorum_size, pow_scale, _, _) ->
           let cfg =
-            { n_nodes
-            ; n_blocks
-            ; protocol= Parallel
-            ; quorum_size
-            ; confirmations= n_confirmations
-            ; pow_scale
-            ; delta_dist = Uniform
-            ; delta_vote= d
-            ; delta_block= d
-            ; leader_failure_rate= 0.
-            ; churn= 0.
-            ; eclipse_time= 10.
-            ; (* Attacker *)
-              alpha= rational 1 n_nodes
-            ; strategy= Parallel
-            } in
-          schedule ~tag:("orphan-rate-exponential-" ^ s)
+            { base with quorum_size
+                      ; pow_scale
+                      ; delta_vote= d
+                      ; delta_block= d
+            }
+          in
+          schedule ~tag:("varying-simplified-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
-          schedule ~tag:("orphan-rate-uniform-" ^ s)
+          schedule ~tag:("varying-simplified-uniform-" ^ s)
             { cfg with delta_dist=Uniform}
         ))
 
-(* Analyse orphan rate for "realistic" propagation delays. *)
+(* All scenarios, realistic networks, varying churn ratios. *)
 let () =
+  let churns =
+    range 0 5 |> map (fun x -> rational x 10)
+  in
   let open Simulator in
-  iter scenarios (fun (s, quorum_size, pow_scale, delta_vote, delta_block) ->
-      let cfg =
-        { n_nodes
-        ; n_blocks
-        ; protocol= Parallel
-        ; quorum_size
-        ; confirmations= n_confirmations
-        ; pow_scale
-        ; delta_dist = Uniform
-        ; delta_vote
-        ; delta_block
-        ; leader_failure_rate= 0.
-        ; churn= 0.
-        ; eclipse_time= 10.
-        ; (* Attacker *)
-          alpha= rational 1 n_nodes
-        ; strategy= Parallel
-        } in
-      schedule ~tag:("realistic-exponential-" ^ s)
-        { cfg with delta_dist=Exponential};
-      schedule ~tag:("realistic-uniform-" ^ s)
-        { cfg with delta_dist=Uniform}
-    )
+  iter churns (fun churn ->
+      iter scenarios (fun (s, quorum_size, pow_scale, delta_vote, delta_block) ->
+          let cfg =
+            { base with quorum_size
+                      ; pow_scale
+                      ; delta_vote
+                      ; delta_block
+                      ; churn
+            }
+          in
+          schedule ~tag:("churn-realistic-exponential-" ^ s)
+            { cfg with delta_dist=Exponential};
+          schedule ~tag:("churn-realistic-uniform-" ^ s)
+            { cfg with delta_dist=Uniform}
+        ))
+
+(* All scenarios, realistic networks, varying leader failure rates. *)
+let () =
+  let failures =
+    range 0 5 |> map (fun x -> rational x 10)
+  in
+  let open Simulator in
+  iter failures (fun leader_failure_rate ->
+      iter scenarios (fun (s, quorum_size, pow_scale, delta_vote, delta_block) ->
+          let cfg =
+            { base with quorum_size
+                      ; pow_scale
+                      ; delta_vote
+                      ; delta_block
+                      ; leader_failure_rate
+            }
+          in
+          schedule ~tag:("failure-realistic-exponential-" ^ s)
+            { cfg with delta_dist=Exponential};
+          schedule ~tag:("failure-realistic-uniform-" ^ s)
+            { cfg with delta_dist=Uniform}
+        ))
 
 let run_cols : (string * task) Simulator.column list =
   let open Simulator.ToString in
