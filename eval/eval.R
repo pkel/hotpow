@@ -31,7 +31,7 @@ runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.o
 
 # aggregate iterations
 runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate) ~
-                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations,
+                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations + churn + leader.failure.rate,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
 runs.agg <- do.call("data.frame", runs.agg)
