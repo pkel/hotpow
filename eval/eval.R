@@ -7,7 +7,7 @@ rm(list = ls())
 if (! dir.exists("../eval/plots")) {
   dir.create("../eval/plots", recursive=T)
 }
-do.call(file.remove, list(list.files("../eval/plots/", full.names = TRUE)))
+ignore <- (do.call(file.remove, list(list.files("../eval/plots/", full.names = TRUE))))
 
 pgf <- function(name, data, meta) {
   write.table(data,
@@ -23,7 +23,7 @@ pgf <- function(name, data, meta) {
 ###########
 
 runs <- read.csv('runs.csv')
-str(runs)
+if(interactive()) str(runs)
 
 runs$delta.dist <- as.factor(runs$delta.dist)
 runs$block.orphan.rate <- with(runs, (blocks.observed - blocks.confirmed) / blocks.observed)
@@ -52,15 +52,18 @@ pgf("all",
               nConfirmations = uniq.or.fail(confirmations),
               nIterations = uniq.or.fail(n.iterations))))
 
-# empirical block interval
-##########################
+# block interval distribution and basic orphan rate stats
+#########################################################
+# target block interval 600 second, δ=2
+# three scenarios: nc-fast, nc-slow, k=51/proposed
+# two networks: uniform, exponential
 
 block.file <- function(id, iteration) paste0("blocks-",id,"-",iteration,".csv")
 
-# assume fixed number of blocks
 read.block.files <- function(ids, iterations) {
   # preallocate space
   blocks <- read.csv(block.file(ids[1], iterations[1]))
+  # assume constant number of blocks
   n_blocks <- max(blocks$height)
   n_files <- length(iterations) * length(ids)
   n_rows <- n_files * n_blocks
@@ -168,6 +171,9 @@ if (interactive()) {
   ebi("block-interval-exponential-nc-fast")
   ebi("block-interval-exponential-proposed")
   ebi("block-interval-exponential-nc-slow")
+  ebi("block-interval-uniform-nc-fast")
+  ebi("block-interval-uniform-proposed")
+  ebi("block-interval-uniform-nc-slow")
 } else {
   for (tag in bi.tags) {
     print(paste0(tag,".pdf"))
@@ -177,7 +183,83 @@ if (interactive()) {
   }
 }
 
-stop()
+# orphan rate as a function of network latency
+##############################################
+# target block interval 600 seconds
+# two networks: uniform, exponential
+# three scenarios: nc-fast, nc-slow, k=51/proposed
+# x-axis: δ = 1/4 ... 16
+# y-axis: orphan rate blocks + votes for k>1
+
+or.tags <- tags[startsWith(tags, "orphan-rate")]
+or.df.of.tag <- function(tag) {
+  d <- runs.agg[runs.agg$tag == tag, ]
+  s <- strsplit(sub("^orphan-rate-", "", tag), "-")[[1]]
+  d$net <- s[1]
+  d$cfg <- paste0(tail(s, -1), collapse="-")
+  return(d)
+}
+or <- data.frame(do.call(rbind, lapply(or.tags, or.df.of.tag)))
+or$net <- as.factor(or$net)
+or$cfg <- as.factor(or$cfg)
+if(interactive()){
+  str(or)
+}
+
+or.color   <- colorspace::rainbow_hcl(length(levels(or$cfg)))
+or.color.3 <- colorspace::rainbow_hcl(length(levels(or$cfg)), alpha=0.3)
+
+or.plot.net <- function(net) {
+  ss <- or[or$net==net, ]
+  plot(1, 1,
+       log='xy', xaxt='n', type='n', las=2,
+       ylim=range(with(or,c(block.orphan.rate.mean, vote.orphan.rate.mean))),
+       xlim=range(ss$delta.block),
+       ylab='',
+       xlab='δ')
+  lapply(unique(ss$cfg), function (x) {
+           d <- subset(ss, cfg==x)
+             polygon(c(rev(d$delta.block), d$delta.block),
+                     c(rev(d$block.orphan.rate.mean + d$block.orphan.rate.sd),
+                       pmax(10e-16,d$block.orphan.rate.mean - d$block.orphan.rate.sd)),
+                     col = or.color.3[x], border = NA)
+           lines(block.orphan.rate.mean ~ delta.block, col=or.color[x], data=d)
+           if (unique(d$quorum.size) > 1) {
+             polygon(c(rev(d$delta.block), d$delta.block),
+                     c(rev(d$vote.orphan.rate.mean + d$vote.orphan.rate.sd),
+                       d$vote.orphan.rate.mean - d$vote.orphan.rate.sd),
+                     col = or.color.3[x], border = NA)
+             lines(vote.orphan.rate.mean ~ delta.block, col=or.color[x], lty=2, data=d)
+           }
+       })
+  axis(side=1, at=unique(ss$delta.block))
+  with(ss,
+       title(main=sprintf("orphan rate\nnet: %s    nodes: %i    blocks: %i",
+                          unique(net), unique(n.nodes), unique(n.blocks)
+                          )))
+  legend('bottomright', title='configuration', legend = levels(or$cfg),
+         col=or.color, pch=15)
+  legend('topleft', legend = c("orphaned blocks", "orphaned votes"), lty=1:2)
+}
+#
+if(interactive()) {
+  or.plot.net('uniform')
+  or.plot.net('exponential')
+} else {
+  fname <- paste0("orphan-rate-exponential",".pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  or.plot.net('exponential')
+  dev.off()
+  #
+  fname <- paste0("orphan-rate-uniform",".pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  or.plot.net('uniform')
+  dev.off()
+}
+
+stop("end of script")
 
 # fixed-rate experiment
 #######################
