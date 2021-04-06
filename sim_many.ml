@@ -3,7 +3,7 @@ open Base
 (* TODO read from command line *)
 let n_blocks = 1024
 let n_nodes = 32 (* 1024 *)
-let n_iterations = 64
+let n_iterations = 16 (* 64 *)
 let n_confirmations = 32
 let n_cores = Cpu.numcores ()
 
@@ -63,9 +63,10 @@ let synchrony = 2.
  *)
 
 let scenarios =
-  [ "proposed", 51, rational 600 51, synchrony /. 8., synchrony
-  ; "nc-slow",   1, rational 600  1, synchrony      , synchrony
-  ; "nc-fast",   1, rational 600 51, synchrony      , synchrony /. 4.
+  (* protocol, confirmations, k, lambda, delta_vote, delta_block *)
+  [ "proposed",  1, 51, rational 600 51, synchrony /. 8., synchrony
+  ; "nc-slow",  10,  1, rational 600  1, synchrony      , synchrony
+  ; "nc-fast",  30,  1, rational 600 51, synchrony      , synchrony /. 4.
   ]
 
 (* base config *)
@@ -74,31 +75,40 @@ let base =
   { n_nodes
   ; n_blocks
   ; protocol= Parallel
-  ; quorum_size = 42
-  ; confirmations= n_confirmations
+  ; quorum_size= 0
+  ; confirmations= 0
   ; pow_scale = synchrony
   ; delta_dist = Uniform
   ; delta_vote= synchrony
   ; delta_block= synchrony
   ; leader_failure_rate= 0.
   ; churn= 0.
-  ; eclipse_time= 10.
+  ; eclipse_time= 3600. (* 1h *)
   ; (* Attacker *)
     alpha= rational 1 n_nodes
   ; strategy= Parallel
   }
 
+let simplified (s, confirmations, quorum_size, pow_scale, _, _) =
+  s, { base with quorum_size
+               ; confirmations
+               ; pow_scale
+               ; delta_vote= synchrony
+               ; delta_block= synchrony
+     }
+
+let realistic (s, confirmations, quorum_size, pow_scale, delta_vote, delta_block) =
+  s, { base with quorum_size
+               ; confirmations
+               ; pow_scale
+               ; delta_vote
+               ; delta_block
+     }
+
 (* All scenarios, simplified networks *)
 let () =
-  let open Simulator in
-  iter scenarios (fun (s, quorum_size, pow_scale, _, _) ->
-      let cfg =
-        { base with quorum_size
-                  ; pow_scale
-                  ; delta_vote= synchrony
-                  ; delta_block= synchrony
-        }
-      in
+  iter scenarios (fun s ->
+      let s, cfg = simplified s in
       schedule ~tag:("simplified-exponential-" ^ s)
         {cfg with delta_dist=Exponential};
       schedule ~tag:("simplified-uniform-" ^ s)
@@ -107,15 +117,8 @@ let () =
 
 (* All scenarios, realistic networks *)
 let () =
-  let open Simulator in
-  iter scenarios (fun (s, quorum_size, pow_scale, delta_vote, delta_block) ->
-      let cfg =
-        { base with quorum_size
-                  ; pow_scale
-                  ; delta_vote
-                  ; delta_block
-        }
-      in
+  iter scenarios (fun s ->
+      let s, cfg = realistic s in
       schedule ~tag:("realistic-exponential-" ^ s)
         { cfg with delta_dist=Exponential};
       schedule ~tag:("realistic-uniform-" ^ s)
@@ -127,19 +130,17 @@ let () =
   let deltas =
     range 0 6 |> map (fun x -> rational (1 lsl x) 4) (* 1/4 ... 16 *)
   in
-  let open Simulator in
   iter deltas (fun d ->
-      iter scenarios (fun (s, quorum_size, pow_scale, _, _) ->
+      iter scenarios (fun s ->
+          let s, cfg = simplified s in
           let cfg =
-            { base with quorum_size
-                      ; pow_scale
-                      ; delta_vote= d
-                      ; delta_block= d
+            { cfg with delta_vote= d
+                     ; delta_block= d
             }
           in
-          schedule ~tag:("varying-simplified-exponential-" ^ s)
+          schedule ~tag:("latency-simplified-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
-          schedule ~tag:("varying-simplified-uniform-" ^ s)
+          schedule ~tag:("latency-simplified-uniform-" ^ s)
             { cfg with delta_dist=Uniform}
         ))
 
@@ -148,17 +149,10 @@ let () =
   let churns =
     range 0 5 |> map (fun x -> rational x 10)
   in
-  let open Simulator in
   iter churns (fun churn ->
-      iter scenarios (fun (s, quorum_size, pow_scale, delta_vote, delta_block) ->
-          let cfg =
-            { base with quorum_size
-                      ; pow_scale
-                      ; delta_vote
-                      ; delta_block
-                      ; churn
-            }
-          in
+      iter scenarios (fun s ->
+          let s, cfg = realistic s in
+          let cfg = { cfg with churn } in
           schedule ~tag:("churn-realistic-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
           schedule ~tag:("churn-realistic-uniform-" ^ s)
@@ -170,17 +164,10 @@ let () =
   let failures =
     range 0 5 |> map (fun x -> rational x 10)
   in
-  let open Simulator in
   iter failures (fun leader_failure_rate ->
-      iter scenarios (fun (s, quorum_size, pow_scale, delta_vote, delta_block) ->
-          let cfg =
-            { base with quorum_size
-                      ; pow_scale
-                      ; delta_vote
-                      ; delta_block
-                      ; leader_failure_rate
-            }
-          in
+      iter scenarios (fun s ->
+          let s, cfg = realistic s in
+          let cfg = { cfg with leader_failure_rate } in
           schedule ~tag:("failure-realistic-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
           schedule ~tag:("failure-realistic-uniform-" ^ s)

@@ -30,7 +30,7 @@ runs$block.orphan.rate <- with(runs, (blocks.observed - blocks.confirmed) / bloc
 runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.observed)
 
 # aggregate iterations
-runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate) ~
+runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate, block.interval=mean.interval) ~
                       tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations + churn + leader.failure.rate,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
@@ -120,8 +120,8 @@ bi.rows <- with(bi.stats,
                       sprintf("$%g''$", signif(q50 , 4)),
                       sprintf("$%g''$", signif(q95 , 4)),
                       sprintf("$%g''$", signif(q99 , 4)),
-                      sprintf("$%.4f\\,\\%%$", block.orphan.rate),
-                      sprintf("$%.4f\\,\\%%$", vote.orphan.rate),
+                      sprintf("$%g\\,\\%%$", signif(block.orphan.rate*100, 3)),
+                      sprintf("$%g\\,\\%%$", signif(vote.orphan.rate*100, 3)),
                       sep = " & "))
 bi.lns <- c("\\begin{tabular}{lllccccccccc}",
             "\\toprule",
@@ -196,15 +196,15 @@ if (interactive()) {
 # orphan rate as a function of network latency
 ##############################################
 # target block interval 600 seconds
-# two networks: uniform, exponential
+# two networks: uniform, exponential, simplified latency model
 # three scenarios: nc-fast, nc-slow, k=51/proposed
 # x-axis: δ = 1/4 ... 16
 # y-axis: orphan rate blocks + votes for k>1
 
-or.tags <- tags[startsWith(tags, "varying-simplified")]
+or.tags <- tags[startsWith(tags, "latency-simplified")]
 or.df.of.tag <- function(tag) {
   d <- runs.agg[runs.agg$tag == tag, ]
-  s <- strsplit(sub("^varying-simplified-", "", tag), "-")[[1]]
+  s <- strsplit(sub("latency-simplified-", "", tag), "-")[[1]]
   d$net <- s[1]
   d$cfg <- paste0(tail(s, -1), collapse="-")
   return(d)
@@ -244,9 +244,8 @@ or.plot.net <- function(net) {
        })
   axis(side=1, at=unique(ss$delta.block))
   with(ss,
-       title(main=sprintf("orphan rate\nnet: %s    nodes: %i    blocks: %i",
-                          unique(net), unique(n.nodes), unique(n.blocks)
-                          )))
+       title(main=sprintf("orphan rate\nsimplified/%s    nodes: %i    blocks: %i    iterations: %g",
+                          unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
   legend('bottomright', title='configuration', legend = levels(or$cfg),
          col=or.color, pch=15)
   legend('topleft', legend = c("orphaned blocks", "orphaned votes"), lty=1:2)
@@ -256,17 +255,198 @@ if(interactive()) {
   or.plot.net('uniform')
   or.plot.net('exponential')
 } else {
-  fname <- paste0("orphan-rate-exponential",".pdf")
+  fname <- paste0("latency-orphan-rate-simplified-exponential",".pdf")
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
   or.plot.net('exponential')
-  dev.off()
+  invisible(dev.off())
   #
-  fname <- paste0("orphan-rate-uniform",".pdf")
+  fname <- paste0("latency-orphan-rate-simplified-uniform",".pdf")
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
   or.plot.net('uniform')
-  dev.off()
+  invisible(dev.off())
+}
+
+# block interval as a function of network latency
+#################################################
+# target block interval 600 seconds
+# two networks: uniform, exponential, simplified latency model
+# three scenarios: nc-slow, k=51/proposed
+# x-axis: δ = 1/4 ... 16
+# y-axis: block interval
+
+lat.plot.net <- function(net) {
+  ss <- or[or$net==net & as.character(or$cfg) %in% c('proposed', 'nc-slow'), ]
+  plot(1, 1,
+       log='x', xaxt='n', type='n', las=2,
+       ylim=range(ss$block.interval.mean),
+       xlim=range(ss$delta.block),
+       ylab='',
+       xlab='δ')
+  lapply(unique(ss$cfg), function (x) {
+           d <- subset(ss, cfg==x)
+             polygon(c(rev(d$delta.block), d$delta.block),
+                     c(rev(d$block.interval.mean + d$block.interval.sd),
+                       d$block.interval.mean - d$block.interval.sd),
+                     col = or.color.3[x], border = NA)
+           lines(block.interval.mean ~ delta.block, col=or.color[x], data=d)
+       })
+  axis(side=1, at=unique(ss$delta.block))
+  with(ss,
+       title(main=sprintf("block interval\nsimplified/%s    nodes: %i    blocks: %i    iterations: %g",
+                          unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
+  legend('bottomright', title='configuration', legend = levels(or$cfg)[unique(ss$cfg)],
+         col=or.color[unique(ss$cfg)], pch=15)
+}
+#
+if(interactive()) {
+  lat.plot.net('uniform')
+  lat.plot.net('exponential')
+} else {
+  fname <- paste0("latency-block-interval-simplified-exponential",".pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  lat.plot.net('exponential')
+  invisible(dev.off())
+  #
+  fname <- paste0("latency-block-interval-simplified-uniform",".pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  lat.plot.net('uniform')
+  invisible(dev.off())
+}
+
+# block interval as a function of churn
+#######################################
+# target block interval 600 seconds
+# two networks: uniform, exponential, "realistic" latency
+# scenario: nc-slow, k=51/proposed
+# x-axis: churn = 0 ... 1/2
+# y-axis: block interval
+
+churn.tags <- tags[startsWith(tags, "churn-realistic")]
+churn.df.of.tag <- function(tag) {
+  d <- runs.agg[runs.agg$tag == tag, ]
+  s <- strsplit(sub("^churn-realistic-", "", tag), "-")[[1]]
+  d$net <- s[1]
+  d$cfg <- paste0(tail(s, -1), collapse="-")
+  return(d)
+}
+churn <- data.frame(do.call(rbind, lapply(churn.tags, churn.df.of.tag)))
+churn$net <- as.factor(churn$net)
+churn$cfg <- as.factor(churn$cfg)
+if(interactive()){
+  str(churn)
+}
+
+churn.color   <- colorspace::rainbow_hcl(length(levels(churn$cfg)))
+churn.color.3 <- colorspace::rainbow_hcl(length(levels(churn$cfg)), alpha=0.3)
+
+churn.plot.net <- function(net) {
+  ss <- churn[churn$net==net & as.character(churn$cfg) %in% c('proposed', 'nc-slow'), ]
+  plot(1, 1,
+       xaxt='n', type='n', las=2,
+       ylim=range(c(600, ss$block.interval.mean, 1200)),
+       xlim=range(ss$churn),
+       ylab='',
+       xlab='churn ratio')
+  lapply(unique(ss$cfg), function (x) {
+           d <- subset(ss, cfg==x)
+           polygon(c(rev(d$churn), d$churn),
+                   c(rev(d$block.interval.mean + d$block.interval.sd),
+                     pmax(10e-16,d$block.interval.mean - d$block.interval.sd)),
+                   col = churn.color.3[x], border = NA)
+           lines(block.interval.mean ~ churn, col=churn.color[x], data=d)
+       })
+  axis(side=1, at=unique(ss$churn))
+  with(ss,
+       title(main=sprintf("block interval\nrealistic/%s    nodes: %i    blocks: %i    iterations: %g",
+                          unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
+  legend('bottomright', title='configuration', legend = levels(churn$cfg)[unique(ss$cfg)],
+         col=churn.color[unique(ss$cfg)], pch=15)
+}
+#
+if(interactive()) {
+  churn.plot.net('uniform')
+  churn.plot.net('exponential')
+} else {
+  fname <- "churn-block-interval-realistic-exponential.pdf"
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  churn.plot.net('exponential')
+  invisible(dev.off())
+  #
+  fname <- "churn-block-interval-realistic-uniform.pdf"
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  churn.plot.net('uniform')
+  invisible(dev.off())
+}
+
+# block interval as a function of leader failure
+################################################
+# target block interval 600 seconds
+# two networks: uniform, exponential, "realistic" latency
+# three scenarios: nc-fast, nc-slow, k=51/proposed
+# x-axis: failure rate = 0 ... 1/2
+# y-axis: block interval
+
+lf.tags <- tags[startsWith(tags, "failure-realistic")]
+lf.df.of.tag <- function(tag) {
+  d <- runs.agg[runs.agg$tag == tag, ]
+  s <- strsplit(sub("^failure-realistic-", "", tag), "-")[[1]]
+  d$net <- s[1]
+  d$cfg <- paste0(tail(s, -1), collapse="-")
+  return(d)
+}
+lf <- data.frame(do.call(rbind, lapply(lf.tags, lf.df.of.tag)))
+lf$net <- as.factor(lf$net)
+lf$cfg <- as.factor(lf$cfg)
+if(interactive()){
+  str(lf)
+}
+
+lf.color   <- colorspace::rainbow_hcl(length(levels(lf$cfg)))
+lf.color.3 <- colorspace::rainbow_hcl(length(levels(lf$cfg)), alpha=0.3)
+
+lf.plot.net <- function(net) {
+  ss <- lf[lf$net==net & as.character(lf$cfg) == 'proposed', ]
+  plot(1, 1,
+       xaxt='n', type='n', las=2,
+       ylim=range(c(600, ss$block.interval.mean, 620)),
+       xlim=range(ss$leader.failure.rate),
+       ylab='',
+       xlab='leader failure rate')
+  lapply(unique(ss$cfg), function (x) {
+           d <- subset(ss, cfg==x)
+           polygon(c(rev(d$leader.failure.rate), d$leader.failure.rate),
+                   c(rev(d$block.interval.mean + d$block.interval.sd),
+                     pmax(10e-16,d$block.interval.mean - d$block.interval.sd)),
+                   col = lf.color.3[x], border = NA)
+           lines(block.interval.mean ~ leader.failure.rate, col=lf.color[x], data=d)
+       })
+  axis(side=1, at=unique(ss$lf))
+  with(ss,
+       title(main=sprintf("block interval\nproposed    realistic/%s    nodes: %i    blocks: %i    iterations: %g",
+                          unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
+}
+#
+if(interactive()) {
+  lf.plot.net('uniform')
+  lf.plot.net('exponential')
+} else {
+  fname <- "failure-block-interval-realistic-exponential.pdf"
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  lf.plot.net('exponential')
+  invisible(dev.off())
+  #
+  fname <- "failure-block-interval-realistic-uniform.pdf"
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  lf.plot.net('uniform')
+  invisible(dev.off())
 }
 
 stop("end of script")
