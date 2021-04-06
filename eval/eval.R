@@ -141,7 +141,7 @@ if(interactive()) {
 }
 
 # plot distribution
-ebi <- function(t) {
+ebi <- function(t, ...) {
   ebi.runs <- subset(runs, tag == t)
   s <- unique(ebi.runs$pow.scale)
   q <- unique(ebi.runs$quorum.size)
@@ -156,7 +156,7 @@ ebi <- function(t) {
   ebi.data <- read.block.files(ebi.id, unique(ebi.runs$iteration))
   ebi.intervals <- ebi.data$interval
   ebi.dinterval <- density(ebi.intervals, from=min(ebi.intervals))
-  hist(ebi.intervals, probability=T, main="", xlab="", las=1, nclass=20)
+  hist(ebi.intervals, probability=T, main="", xlab="", ylab="", las=1, ...)
   lines(ebi.dinterval$x,
         dgamma(ebi.dinterval$x, shape=q, scale=s),
         col=2, type='l')
@@ -166,31 +166,36 @@ ebi <- function(t) {
   title(main=t,
         xlab="block interval")
   legend("topright",
-         c("observation", "Gamma distribution", "observed mean", "target interval"),
-         col=c(1,2,1,2), lty=c(1,1,2,2))
+         c("Gamma distribution", "observed mean", "target interval"),
+         col=c(2,1,2), lty=c(1,2,2))
 }
 #
 if (interactive()) {
-  ebi("simplified-exponential-nc-fast")
-  ebi("simplified-exponential-proposed")
-  ebi("simplified-exponential-nc-slow")
-  ebi("simplified-uniform-nc-fast")
   ebi("simplified-uniform-proposed")
   ebi("simplified-uniform-nc-slow")
-  ebi("realistic-exponential-nc-fast")
-  ebi("realistic-exponential-proposed")
-  ebi("realistic-exponential-nc-slow")
-  ebi("realistic-uniform-nc-fast")
-  ebi("realistic-uniform-proposed")
-  ebi("realistic-uniform-nc-slow")
+  ebi("simplified-uniform-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
+  ebi("simplified-uniform-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
 } else {
-  for (tag in bi.tags) {
-    fname <- paste0("block-interval-", tag,".pdf")
-    print(fname)
-    cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
-    ebi(tag)
-    dev.off()
-  }
+  fname <- paste0("block-interval-simplified-uniform-proposed.pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
+  ebi("simplified-uniform-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
+  #
+  fname <- paste0("block-interval-simplified-uniform-nc-slow.pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
+  ebi("simplified-uniform-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
+  #
+  fname <- paste0("block-interval-simplified-exponential-proposed.pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
+  ebi("simplified-exponential-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
+  #
+  fname <- paste0("block-interval-simplified-exponential-nc-slow.pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
+  ebi("simplified-exponential-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
+  invisible(dev.off())
 }
 
 # orphan rate as a function of network latency
