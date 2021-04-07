@@ -110,7 +110,7 @@ let check_params p =
 
 type sim_vote =
   { data: vote
-  ; target_height: int (* data.ref.height + 1 *)
+  ; epoch: int (* data.ref.height *)
   ; published_at: float
   ; mutable confirmed: bool (* modified after simulation *) }
 
@@ -126,6 +126,8 @@ type result =
   ; blocks_confirmed: int
   ; votes_observed: int
   ; votes_confirmed: int
+  ; attacker_blocks_confirmed: int
+  ; attacker_votes_confirmed: int
   ; mean_interval: float
   ; blocks: sim_block list
   ; votes: sim_vote list }
@@ -166,6 +168,8 @@ let cols : row column list =
   ; {title= "blocks.confirmed"; f= (fun x -> i x.r.blocks_confirmed)}
   ; {title= "votes.observed"; f= (fun x -> i x.r.votes_observed)}
   ; {title= "votes.confirmed"; f= (fun x -> i x.r.votes_confirmed)}
+  ; {title= "attacker.blocks.confirmed"; f= (fun x -> i x.r.attacker_blocks_confirmed)}
+  ; {title= "attacker.votes.confirmed"; f= (fun x -> i x.r.attacker_votes_confirmed)}
   ; {title= "mean.interval"; f= (fun x -> f x.r.mean_interval)} ]
 
 let block_cols : sim_block column list =
@@ -182,7 +186,7 @@ type net_event =
 
 type event = ATV of {nth: int; node: int} | Net of net_event | Shutdown
 type eclipse = {till: float; queue: net_event Queue.t}
-type node = {m: (module Node); mutable eclipse: eclipse option}
+type node = {m: (module Node); pubkey: DSA.public_key ; mutable eclipse: eclipse option}
 
 let string_of_block (b : block) =
   let open Link in
@@ -234,8 +238,6 @@ type state =
   { mutable height: int
   ; mutable atv_cnt: int
   ; mutable shutdown: bool
-  ; attacker_id: DSA.public_key
-  ; attacker_secret: DSA.private_key
   ; target_height: int
   ; nodes: node array
   ; scheduler: event scheduler
@@ -360,42 +362,51 @@ let result ~p ~s : result =
     (* get all votes up to confirmed target height and sort by publication *)
     Hashtbl.fold
       (fun _v (sv : sim_vote) acc ->
-        if sv.target_height <= p.n_blocks then sv :: acc else acc)
+        if sv.epoch < p.n_blocks then sv :: acc else acc)
       s.votes []
     |> List.sort (fun (a : sim_vote) b ->
            Float.compare a.published_at b.published_at) in
-  let blocks_confirmed =
-    (* count confirmed blocks. Should equal requested number of blocks. *)
-    let cnt = ref 0 in
-    List.iter (fun b -> if b.confirmed then incr cnt) blocks ;
-    assert (!cnt = p.n_blocks) ;
-    !cnt
-  and votes_confirmed =
-    (* count confirmed votes. Should equal blocks_confirmed * quorum_size *)
-    let cnt = ref 0 in
-    List.iter (fun (v : sim_vote) -> if v.confirmed then incr cnt) votes ;
-    assert (!cnt = p.n_blocks * p.quorum_size) ;
-    !cnt in
+  let attacker_id = s.nodes.(0).pubkey in
+  let blocks_observed, blocks_confirmed, attacker_blocks_confirmed =
+    (* count blocks *)
+    let o, c, a = ref 0, ref 0, ref 0 in
+    List.iter (fun b ->
+        incr o ;
+        if b.confirmed then incr c;
+        if fst (List.hd b.data.quorum) = attacker_id then incr a
+      ) blocks ;
+    assert (!c = p.n_blocks) ;
+    !o, !c, !a
+  and votes_observed, votes_confirmed, attacker_votes_confirmed =
+    (* count votes *)
+    let o, c, a = ref 0, ref 0, ref 0 in
+    List.iter (fun (v : sim_vote) ->
+        incr o;
+        if v.confirmed then incr c;
+        let _, id, _ = v.data in
+        if id = attacker_id then incr a
+      ) votes ;
+    assert (!c = p.n_blocks * p.quorum_size) ;
+    !o, !c, !a
+  in
   { blocks_confirmed
-  ; blocks_observed= List.length blocks
+  ; blocks_observed
   ; votes_confirmed
-  ; votes_observed= List.length votes
+  ; votes_observed
+  ; attacker_blocks_confirmed
+  ; attacker_votes_confirmed
   ; mean_interval= last_publication /. float_of_int blocks_confirmed
   ; blocks
   ; votes }
 
 let init ~p =
-  let attacker_id, attacker_secret = DSA.id_of_int 0
-  and scheduler = new scheduler in
+  let scheduler = new scheduler in
   let nodes : node array =
     Array.init p.n_nodes (fun i ->
-        let m =
-          if i = 0 then
-            spawn ~p scheduler attacker_id attacker_secret p.strategy
-          else
-            let id, secret = DSA.id_of_int i in
-            spawn ~p scheduler id secret p.protocol in
-        {m; eclipse= None}) in
+        let pubkey, secret = DSA.id_of_int i in
+        let code = if i = 0 then p.strategy else p.protocol in
+        {m = spawn ~p scheduler pubkey secret code; pubkey; eclipse= None})
+  in
   let () =
     (* eclipse first set of nodes *)
     let n = int_of_float (floor (float_of_int p.n_nodes *. p.churn)) in
@@ -409,8 +420,6 @@ let init ~p =
   { height= 0
   ; atv_cnt= 0
   ; shutdown= false
-  ; attacker_id
-  ; attacker_secret
   ; target_height= p.n_blocks + p.confirmations
   ; nodes
   ; scheduler
@@ -426,12 +435,12 @@ let event_filter verbosity = function
   | Net (Broadcast _) when verbosity >= 1 -> true
   | _ -> false
 
-let height blockstore parent =
-  match BlockStore.get blockstore parent with
-  | Some (p : sim_block) -> Some (p.height + 1)
-  | None when parent = Link.hash Prot_parallel.genesis ->
+let height blockstore blockhash =
+  match BlockStore.get blockstore blockhash with
+  | Some (p : sim_block) -> Some p.height
+  | None when blockhash = Link.hash Prot_parallel.genesis ->
       (* genesis is not in this blockstore *)
-      Some 1
+      Some 0
   | None -> None
 
 let track_vote ~s (v : vote) =
@@ -440,7 +449,7 @@ let track_vote ~s (v : vote) =
       { data= v
       ; published_at= s.scheduler#now
       ; confirmed= false
-      ; target_height=
+      ; epoch=
           (let parent, _, _ = v in
            match height s.blocks parent with
            | Some x -> x
@@ -452,7 +461,7 @@ let track_block ~s (b : block) =
   if not (BlockStore.mem s.blocks hash) then (
     let height =
       match height s.blocks parent with
-      | Some x -> x
+      | Some x -> x + 1
       | None -> failwith "invalid parent in block broadcast" in
     let sb =
       {hash; data= b; height; published_at= s.scheduler#now; confirmed= false}

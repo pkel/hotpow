@@ -31,7 +31,7 @@ runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.o
 
 # aggregate iterations
 runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate, block.interval=mean.interval) ~
-                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations + churn + leader.failure.rate,
+                      tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations + churn + leader.failure.rate + alpha + strategy,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
 runs.agg <- do.call("data.frame", runs.agg)
@@ -55,7 +55,7 @@ pgf("all",
 # block interval distribution ( basic orphan rate stats )
 #########################################################
 # target block interval 600 second, δ=2
-# three scenarios: nc-fast, (nc-slow), k=51/proposed
+# two(three) scenarios: (nc-fast), nc-slow, k=51/proposed
 # two networks: uniform, exponential
 
 block.file <- function(id, iteration) paste0("blocks-",id,"-",iteration,".csv")
@@ -297,7 +297,7 @@ if(interactive()) {
 #################################################
 # target block interval 600 seconds
 # two networks: uniform, exponential, simplified latency model
-# three scenarios: nc-slow, k=51/proposed
+# two scenarios: nc-slow, k=51/proposed
 # x-axis: δ = 1/4 ... 16
 # y-axis: block interval
 
@@ -346,7 +346,7 @@ if(interactive()) {
 #######################################
 # target block interval 600 seconds
 # two networks: uniform, exponential, "realistic" latency
-# scenario: nc-slow, k=51/proposed
+# two scenarios: nc-slow, k=51/proposed
 # x-axis: churn = 0 ... 1/2
 # y-axis: block interval
 
@@ -413,7 +413,7 @@ if(interactive()) {
 ################################################
 # target block interval 600 seconds
 # two networks: uniform, exponential, "realistic" latency
-# three scenarios: nc-fast, nc-slow, k=51/proposed
+# two scenarios: nc-slow, k=51/proposed
 # x-axis: failure rate = 0 ... 1/2
 # y-axis: block interval
 
@@ -430,6 +430,72 @@ lf$net <- as.factor(lf$net)
 lf$cfg <- as.factor(lf$cfg)
 if(interactive()){
   str(lf)
+}
+
+lf.color   <- colorspace::rainbow_hcl(length(levels(lf$cfg)))
+lf.color.3 <- colorspace::rainbow_hcl(length(levels(lf$cfg)), alpha=0.3)
+
+lf.plot.net <- function(net) {
+  ss <- lf[lf$net==net & as.character(lf$cfg) == 'proposed', ]
+  plot(1, 1,
+       xaxt='n', type='n', las=2,
+       ylim=range(c(600, ss$block.interval.mean, 620)),
+       xlim=range(ss$leader.failure.rate),
+       ylab='',
+       xlab='leader failure rate')
+  lapply(unique(ss$cfg), function (x) {
+           d <- subset(ss, cfg==x)
+           polygon(c(rev(d$leader.failure.rate), d$leader.failure.rate),
+                   c(rev(d$block.interval.mean + d$block.interval.sd),
+                     pmax(10e-16,d$block.interval.mean - d$block.interval.sd)),
+                   col = lf.color.3[x], border = NA)
+           lines(block.interval.mean ~ leader.failure.rate, col=lf.color[x], data=d)
+       })
+  axis(side=1, at=unique(ss$lf))
+  with(ss,
+       title(main=sprintf("block interval\nproposed    realistic/%s    nodes: %i    blocks: %i    iterations: %g",
+                          unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
+}
+#
+if(interactive()) {
+  lf.plot.net('uniform')
+  lf.plot.net('exponential')
+} else {
+  fname <- "failure-block-interval-realistic-exponential.pdf"
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  lf.plot.net('exponential')
+  invisible(dev.off())
+  #
+  fname <- "failure-block-interval-realistic-uniform.pdf"
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  lf.plot.net('uniform')
+  invisible(dev.off())
+}
+
+# attacker block/vote share as a function of alpha
+##################################################
+# target block interval 600 seconds
+# two networks: uniform, exponential, "realistic" latency
+# two scenarios: nc-slow, k=51/proposed
+# censor strategy (TODO: vs honest participation)
+# x-axis: alpha = 0 ... 1/2
+# y-axis: attacker share in blocks/votes
+
+cs.tags <- tags[startsWith(tags, "censor-realistic")]
+cs.df.of.tag <- function(tag) {
+  d <- runs.agg[runs.agg$tag == tag, ]
+  s <- strsplit(sub("^censor-realistic-", "", tag), "-")[[1]]
+  d$net <- s[1]
+  d$cfg <- paste0(tail(s, -1), collapse="-")
+  return(d)
+}
+cs <- data.frame(do.call(rbind, lapply(cs.tags, cs.df.of.tag)))
+cs$net <- as.factor(cs$net)
+cs$cfg <- as.factor(cs$cfg)
+if(interactive()){
+  str(cs)
 }
 
 lf.color   <- colorspace::rainbow_hcl(length(levels(lf$cfg)))
