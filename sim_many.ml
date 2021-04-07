@@ -179,12 +179,7 @@ let () =
 (* Censor attack, proposed scenario, realistic networks, varying alpha. *)
 let () =
   let alphas =
-    [ rational 1 50
-    ; rational 1 10
-    ; rational 1 4
-    ; rational 1 3
-    ; rational 1 2
-    ]
+    range 0 10 |> map (fun x -> rational x 20)
   in
   iter alphas (fun alpha ->
       let cfg =
