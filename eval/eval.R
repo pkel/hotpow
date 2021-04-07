@@ -52,10 +52,10 @@ pgf("all",
               nConfirmations = uniq.or.fail(confirmations),
               nIterations = uniq.or.fail(n.iterations))))
 
-# block interval distribution and basic orphan rate stats
+# block interval distribution ( basic orphan rate stats )
 #########################################################
 # target block interval 600 second, δ=2
-# three scenarios: nc-fast, nc-slow, k=51/proposed
+# three scenarios: nc-fast, (nc-slow), k=51/proposed
 # two networks: uniform, exponential
 
 block.file <- function(id, iteration) paste0("blocks-",id,"-",iteration,".csv")
@@ -108,26 +108,46 @@ bi.row.of.tag <- function(tag) {
              block.orphan.rate=mean(bi.runs$block.orphan.rate),
              vote.orphan.rate=mean(bi.runs$vote.orphan.rate))
 }
-bi.stats <- data.frame(do.call(rbind, lapply(bi.tags, bi.row.of.tag)))
-bi.rows <- with(bi.stats,
+bi.stats.long <- data.frame(do.call(rbind, lapply(bi.tags, bi.row.of.tag)))
+bi.stats.wide <- reshape(subset(bi.stats.long, cfg %in% c('proposed','nc-slow')),
+                         idvar=c("net.lat", "net.dis"),
+                         timevar=c("cfg"),
+                         direction="wide")
+colnames(bi.stats.wide) <- sub("nc-slow", "btc", colnames(bi.stats.wide))
+bi.rows <- with(bi.stats.wide,
                 paste(sprintf("\\textbf{%s}", net.lat),
                       sprintf("\\textbf{%s}", net.dis),
-                      sprintf("\\textbf{%s}", cfg),
-                      sprintf("$%g''$", signif(mean, 4)),
-                      sprintf("$%g''$", signif(sd  , 4)),
-                      sprintf("$%g''$", signif(q1  , 4)),
-                      sprintf("$%g''$", signif(q5  , 4)),
-                      sprintf("$%g''$", signif(q50 , 4)),
-                      sprintf("$%g''$", signif(q95 , 4)),
-                      sprintf("$%g''$", signif(q99 , 4)),
-                      sprintf("$%g\\,\\%%$", signif(block.orphan.rate*100, 3)),
-                      sprintf("$%g\\,\\%%$", signif(vote.orphan.rate*100, 3)),
+                      sprintf("%g", round(mean.proposed, 2)),
+                      sprintf("%g", round(mean.btc     , 2)),
+                      sprintf("%g", round(sd.proposed  , 2)),
+                      sprintf("%g", round(sd.btc       , 2)),
+                      sprintf("%g", round(q50.proposed , 2)),
+                      sprintf("%g", round(q50.btc      , 2)),
+                      sprintf("%g", round(q95.proposed , 2)),
+                      sprintf("%g", round(q95.btc      , 2)),
+                      sprintf("%g", round(q99.proposed , 2)),
+                      sprintf("%g", round(q99.btc      , 2)),
                       sep = " & "))
-bi.lns <- c("\\begin{tabular}{lllccccccccc}",
+bi.lns <- c(paste0("\\begin{tabular}{ll",
+                     "S[table-format=3.2]", # mean
+                     "S[table-format=3.2]",
+                     "S[table-format=3.2]", # sd
+                     "S[table-format=3.2]",
+                     "S[table-format=3.2]", # q50
+                     "S[table-format=3.2]",
+                     "S[table-format=3.2]", # q95
+                     "S[table-format=4.2]",
+                     "S[table-format=3.2]", # q99
+                     "S[table-format=4.2]",
+                     "}"),
             "\\toprule",
-            "\\multicolumn{3}{c}{configuration} & \\multicolumn{2}{c}{block interval} & \\multicolumn{5}{c}{quantiles} & \\multicolumn{2}{c}{orphan rate} \\\\",
-            "\\cmidrule(r){1-3} \\cmidrule(lr){4-5} \\cmidrule(lr){6-10} \\cmidrule(l){11-12}",
-            "latency & distribution & protocol & mean & std.\\,dev. & 1\\,\\% & 5\\,\\% & 50\\,\\% & 95\\,\\% & 99\\,\\% & block & vote \\\\",
+            paste(sapply(c("network", "mean", "std.\\,dev.", "50\\,\\%", "95\\,\\%", "99\\,\\%"),
+                         function (x) sprintf("\\multicolumn{2}{c}{%s}", x)),
+                  collapse=" & "),
+            "\\\\",
+            sapply(1:6, function (i) sprintf("\\cmidrule(lr){%i-%i}", i * 2 - 1, i * 2)),
+            paste(c("{latency}", "{distribution}", rep(c("{\\proposed}", "{\\btc}"), 5)), collapse= " & "),
+            "\\\\",
             "\\midrule",
             paste(bi.rows, "\\\\"),
             "\\bottomrule",
