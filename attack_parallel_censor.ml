@@ -4,7 +4,7 @@
    as possible. He proposes complete blocks but withholds all of votes. *)
 
 open Primitives
-open Prot_commit
+open Prot_parallel
 
 module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
   open Config
@@ -18,7 +18,7 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
     and id = my_id in
     VoteStore.create ~id ~config
 
-  let chain = Chain.create votes
+  let chain = Chain.create Config.confirmations votes
 
   let propose ~replace lnk =
     match VoteStore.quorum ~replace votes lnk with

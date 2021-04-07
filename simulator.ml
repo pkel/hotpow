@@ -18,18 +18,20 @@ let draw d p =
   | Uniform -> p *. Random.float 2.
   | Exponential -> -1. *. p *. log (Random.float 1.)
 
-type strategy = Parallel | Hotpow | Hotpow_censor
+type strategy = Parallel | Parallel_censor | Hotpow | Hotpow_censor
 [@@deriving hash, show {with_path= false}]
 
-let strategy_enum = [Parallel; Hotpow; Hotpow_censor]
+let strategy_enum = [Parallel; Parallel_censor; Hotpow; Hotpow_censor]
 
 let string_of_strategy = function
   | Parallel -> "parallel"
+  | Parallel_censor -> "parallel-censor"
   | Hotpow -> "hotpow"
   | Hotpow_censor -> "hotpow-censor"
 
 let implementation_of_strategy : strategy -> (module Implementation) = function
   | Parallel -> (module Prot_parallel)
+  | Parallel_censor -> (module Attack_parallel_censor)
   | Hotpow -> (module Prot_commit)
   | Hotpow_censor -> (module Attack_commit_censor)
 
@@ -95,6 +97,7 @@ let check_params p =
     if p.n_blocks < 1 then fail "n-blocks" "must be >= 1" ;
     if p.confirmations < 1 then fail "confirmations" "must be >= 1" ;
     if p.quorum_size < 1 then fail "quorum-size" "must be >= 1" ;
+    if p.pow_scale <= 0. then fail "pow-scale" "must be > 0" ;
     if p.alpha < 0. || p.alpha > 1. then fail "alpha" "must be in [0,1]" ;
     if p.delta_vote < 0. then fail "delta-vote" "must be >= 0" ;
     if p.delta_block < 0. then fail "delta-block" "must be >= 0" ;
