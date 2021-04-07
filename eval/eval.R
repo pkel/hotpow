@@ -28,9 +28,11 @@ if(interactive()) str(runs)
 runs$delta.dist <- as.factor(runs$delta.dist)
 runs$block.orphan.rate <- with(runs, (blocks.observed - blocks.confirmed) / blocks.observed)
 runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.observed)
+runs$attacker.share.blocks <- with(runs, attacker.blocks.confirmed / blocks.confirmed)
+runs$attacker.share.votes <- with(runs, attacker.votes.confirmed / votes.confirmed)
 
 # aggregate iterations
-runs.agg <- aggregate(cbind(vote.orphan.rate, block.orphan.rate, block.interval=mean.interval) ~
+runs.agg <- aggregate(cbind(mean.interval, attacker.share.blocks, attacker.share.votes, vote.orphan.rate, block.orphan.rate) ~
                       tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations + churn + leader.failure.rate + alpha + strategy,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
@@ -117,28 +119,28 @@ colnames(bi.stats.wide) <- sub("nc-slow", "btc", colnames(bi.stats.wide))
 bi.rows <- with(bi.stats.wide,
                 paste(sprintf("\\textbf{%s}", net.lat),
                       sprintf("\\textbf{%s}", net.dis),
-                      sprintf("%g", round(mean.proposed, 2)),
-                      sprintf("%g", round(mean.btc     , 2)),
-                      sprintf("%g", round(sd.proposed  , 2)),
-                      sprintf("%g", round(sd.btc       , 2)),
-                      sprintf("%g", round(q50.proposed , 2)),
-                      sprintf("%g", round(q50.btc      , 2)),
-                      sprintf("%g", round(q95.proposed , 2)),
-                      sprintf("%g", round(q95.btc      , 2)),
-                      sprintf("%g", round(q99.proposed , 2)),
-                      sprintf("%g", round(q99.btc      , 2)),
+                      sprintf("%g", round(mean.proposed, 1)),
+                      sprintf("%g", round(mean.btc     , 1)),
+                      sprintf("%g", round(sd.proposed  , 1)),
+                      sprintf("%g", round(sd.btc       , 1)),
+                      sprintf("%g", round(q50.proposed , 1)),
+                      sprintf("%g", round(q50.btc      , 1)),
+                      sprintf("%g", round(q95.proposed , 1)),
+                      sprintf("%g", round(q95.btc      , 1)),
+                      sprintf("%g", round(q99.proposed , 1)),
+                      sprintf("%g", round(q99.btc      , 1)),
                       sep = " & "))
 bi.lns <- c(paste0("\\begin{tabular}{ll",
-                     "S[table-format=3.2]", # mean
-                     "S[table-format=3.2]",
-                     "S[table-format=3.2]", # sd
-                     "S[table-format=3.2]",
-                     "S[table-format=3.2]", # q50
-                     "S[table-format=3.2]",
-                     "S[table-format=3.2]", # q95
-                     "S[table-format=4.2]",
-                     "S[table-format=3.2]", # q99
-                     "S[table-format=4.2]",
+                     "S[table-format=3.1]", # mean
+                     "S[table-format=3.1]",
+                     "S[table-format=3.1]", # sd
+                     "S[table-format=3.1]",
+                     "S[table-format=3.1]", # q50
+                     "S[table-format=3.1]",
+                     "S[table-format=3.1]", # q95
+                     "S[table-format=4.1]",
+                     "S[table-format=3.1]", # q99
+                     "S[table-format=4.1]",
                      "}"),
             "\\toprule",
             paste(sapply(c("network", "mean", "std.\\,dev.", "50\\,\\%", "95\\,\\%", "99\\,\\%"),
@@ -305,17 +307,17 @@ lat.plot.net <- function(net) {
   ss <- or[or$net==net & as.character(or$cfg) %in% c('proposed', 'nc-slow'), ]
   plot(1, 1,
        log='x', xaxt='n', type='n', las=2,
-       ylim=range(ss$block.interval.mean),
+       ylim=range(ss$mean.interval.mean),
        xlim=range(ss$delta.block),
        ylab='',
        xlab='δ')
   lapply(unique(ss$cfg), function (x) {
            d <- subset(ss, cfg==x)
              polygon(c(rev(d$delta.block), d$delta.block),
-                     c(rev(d$block.interval.mean + d$block.interval.sd),
-                       d$block.interval.mean - d$block.interval.sd),
+                     c(rev(d$mean.interval.mean + d$mean.interval.sd),
+                       d$mean.interval.mean - d$mean.interval.sd),
                      col = or.color.3[x], border = NA)
-           lines(block.interval.mean ~ delta.block, col=or.color[x], data=d)
+           lines(mean.interval.mean ~ delta.block, col=or.color[x], data=d)
        })
   axis(side=1, at=unique(ss$delta.block))
   with(ss,
@@ -372,17 +374,17 @@ churn.plot.net <- function(net) {
   ss <- churn[churn$net==net & as.character(churn$cfg) %in% c('proposed', 'nc-slow'), ]
   plot(1, 1,
        xaxt='n', type='n', las=2,
-       ylim=range(c(600, ss$block.interval.mean, 1200)),
+       ylim=range(c(600, ss$mean.interval.mean, 1200)),
        xlim=range(ss$churn),
        ylab='',
        xlab='churn ratio')
   lapply(unique(ss$cfg), function (x) {
            d <- subset(ss, cfg==x)
            polygon(c(rev(d$churn), d$churn),
-                   c(rev(d$block.interval.mean + d$block.interval.sd),
-                     pmax(10e-16,d$block.interval.mean - d$block.interval.sd)),
+                   c(rev(d$mean.interval.mean + d$mean.interval.sd),
+                     pmax(10e-16,d$mean.interval.mean - d$mean.interval.sd)),
                    col = churn.color.3[x], border = NA)
-           lines(block.interval.mean ~ churn, col=churn.color[x], data=d)
+           lines(mean.interval.mean ~ churn, col=churn.color[x], data=d)
        })
   axis(side=1, at=unique(ss$churn))
   with(ss,
@@ -439,19 +441,19 @@ lf.plot.net <- function(net) {
   ss <- lf[lf$net==net & as.character(lf$cfg) == 'proposed', ]
   plot(1, 1,
        xaxt='n', type='n', las=2,
-       ylim=range(c(600, ss$block.interval.mean, 620)),
+       ylim=range(c(600, ss$mean.interval.mean, 620)),
        xlim=range(ss$leader.failure.rate),
        ylab='',
        xlab='leader failure rate')
   lapply(unique(ss$cfg), function (x) {
            d <- subset(ss, cfg==x)
            polygon(c(rev(d$leader.failure.rate), d$leader.failure.rate),
-                   c(rev(d$block.interval.mean + d$block.interval.sd),
-                     pmax(10e-16,d$block.interval.mean - d$block.interval.sd)),
+                   c(rev(d$mean.interval.mean + d$mean.interval.sd),
+                     pmax(10e-16,d$mean.interval.mean - d$mean.interval.sd)),
                    col = lf.color.3[x], border = NA)
-           lines(block.interval.mean ~ leader.failure.rate, col=lf.color[x], data=d)
+           lines(mean.interval.mean ~ leader.failure.rate, col=lf.color[x], data=d)
        })
-  axis(side=1, at=unique(ss$lf))
+  axis(side=1, at=unique(ss$leader.failure.rate))
   with(ss,
        title(main=sprintf("block interval\nproposed    realistic/%s    nodes: %i    blocks: %i    iterations: %g",
                           unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
@@ -498,45 +500,50 @@ if(interactive()){
   str(cs)
 }
 
-lf.color   <- colorspace::rainbow_hcl(length(levels(lf$cfg)))
-lf.color.3 <- colorspace::rainbow_hcl(length(levels(lf$cfg)), alpha=0.3)
+cs.color   <- colorspace::rainbow_hcl(2)
+cs.color.3 <- colorspace::rainbow_hcl(2, alpha=0.3)
 
-lf.plot.net <- function(net) {
-  ss <- lf[lf$net==net & as.character(lf$cfg) == 'proposed', ]
+draw.interval <- function(x, y, sd, ...) {
+  polygon(c(rev(x), x),
+          c(rev(y + sd), y - sd),
+          border = NA, ...)
+}
+#
+cs.plot.net <- function(net) {
+  ss <- cs[cs$net==net, ]
   plot(1, 1,
-       xaxt='n', type='n', las=2,
-       ylim=range(c(600, ss$block.interval.mean, 620)),
-       xlim=range(ss$leader.failure.rate),
+       type='n', las=1,
+       ylim=range(ss$attacker.share.blocks.mean),
+       xlim=range(ss$alpha),
        ylab='',
-       xlab='leader failure rate')
-  lapply(unique(ss$cfg), function (x) {
-           d <- subset(ss, cfg==x)
-           polygon(c(rev(d$leader.failure.rate), d$leader.failure.rate),
-                   c(rev(d$block.interval.mean + d$block.interval.sd),
-                     pmax(10e-16,d$block.interval.mean - d$block.interval.sd)),
-                   col = lf.color.3[x], border = NA)
-           lines(block.interval.mean ~ leader.failure.rate, col=lf.color[x], data=d)
-       })
-  axis(side=1, at=unique(ss$lf))
+       xlab='α')
+  lines(ss$alpha, ss$alpha, col="gray")
+  draw.interval(ss$alpha, ss$attacker.share.votes.mean,
+                ss$attacker.share.votes.sd, col = cs.color.3[1])
+  draw.interval(ss$alpha, ss$attacker.share.blocks.mean,
+                ss$attacker.share.blocks.sd, col = cs.color.3[2])
+  lines(ss$alpha, ss$attacker.share.votes.mean, col=cs.color[1], type="b")
+  lines(ss$alpha, ss$attacker.share.blocks.mean, col=cs.color[2], type="b")
   with(ss,
-       title(main=sprintf("block interval\nproposed    realistic/%s    nodes: %i    blocks: %i    iterations: %g",
+       title(main=sprintf("attacker share\nproposed    realistic/%s    nodes: %i    blocks: %i    iterations: %g",
                           unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
+  legend("topleft", c("votes", "blocks", "honest (= α)"), pch=c(15,15,NULL), col=c(cs.color, "gray"))
 }
 #
 if(interactive()) {
-  lf.plot.net('uniform')
-  lf.plot.net('exponential')
+  cs.plot.net('uniform')
+  cs.plot.net('exponential')
 } else {
-  fname <- "failure-block-interval-realistic-exponential.pdf"
+  fname <- "alpha-share-realistic-exponential.pdf"
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
-  lf.plot.net('exponential')
+  cs.plot.net('exponential')
   invisible(dev.off())
   #
-  fname <- "failure-block-interval-realistic-uniform.pdf"
+  fname <- "alpha-share-realistic-uniform.pdf"
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
-  lf.plot.net('uniform')
+  cs.plot.net('uniform')
   invisible(dev.off())
 }
 
