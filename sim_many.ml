@@ -3,7 +3,7 @@ open Base
 (* TODO read from command line *)
 let n_blocks = 1024
 let n_nodes = 32 (* 1024 *)
-let n_iterations = 16 (* 64 *)
+let n_iterations = 64
 let n_confirmations = 32
 let n_cores = Cpu.numcores ()
 
@@ -65,8 +65,8 @@ let synchrony = 2.
 let scenarios =
   (* protocol, confirmations, k, lambda, delta_vote, delta_block *)
   [ "proposed",  1, 51, rational 600 51, synchrony /. 8., synchrony
-  ; "nc-slow",  10,  1, rational 600  1, synchrony      , synchrony
-  ; "nc-fast",  30,  1, rational 600 51, synchrony      , synchrony /. 4.
+  ; "nc-slow",  16,  1, rational 600  1, synchrony      , synchrony
+  ; "nc-fast",  32,  1, rational 600 51, synchrony      , synchrony /. 4.
   ]
 
 (* base config *)
