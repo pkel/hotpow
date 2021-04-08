@@ -185,12 +185,16 @@ let () =
       let cfg =
         { proposed with alpha
                       ; strategy= Parallel_censor
-        }
-      in
+        } in
       schedule ~tag:"censor-realistic-exponential-proposed"
         { cfg with delta_dist=Exponential};
       schedule ~tag:"censor-realistic-uniform-proposed"
-        { cfg with delta_dist=Uniform}
+        { cfg with delta_dist=Uniform};
+      let cfg =
+        { cfg with delta_vote= 0.
+                 ; delta_block= 0.
+        } in
+      schedule ~tag:"censor-zero-proposed" cfg
     )
 
 let run_cols : (string * task) Simulator.column list =
