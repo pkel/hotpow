@@ -485,12 +485,11 @@ if(interactive()) {
 # x-axis: alpha = 0 ... 1/2
 # y-axis: attacker share in blocks/votes
 
-cs.tags <- tags[startsWith(tags, "censor-realistic")]
+cs.tags <- tags[startsWith(tags, "censor-") & endsWith(tags, "-proposed")]
 cs.df.of.tag <- function(tag) {
   d <- runs.agg[runs.agg$tag == tag, ]
-  s <- strsplit(sub("^censor-realistic-", "", tag), "-")[[1]]
-  d$net <- s[1]
-  d$cfg <- paste0(tail(s, -1), collapse="-")
+  d$net <- sub("-proposed$", "", sub("^censor-", "", tag))
+  d$cfg <- "proposed"
   return(d)
 }
 cs <- data.frame(do.call(rbind, lapply(cs.tags, cs.df.of.tag)))
@@ -502,6 +501,9 @@ if(interactive()){
 
 cs.color   <- colorspace::rainbow_hcl(2)
 cs.color.3 <- colorspace::rainbow_hcl(2, alpha=0.3)
+
+cs.ref <- read.csv("../eval/old-mc.csv")
+cs.ref <- cs.ref[order(cs.ref$alpha), ]
 
 draw.interval <- function(x, y, sd, ...) {
   polygon(c(rev(x), x),
@@ -524,27 +526,27 @@ cs.plot.net <- function(net) {
                 ss$attacker.share.blocks.sd, col = cs.color.3[2])
   lines(ss$alpha, ss$attacker.share.votes.mean, col=cs.color[1], type="b")
   lines(ss$alpha, ss$attacker.share.blocks.mean, col=cs.color[2], type="b")
+  lines(share_of_blocks ~ alpha, data=cs.ref, col=cs.color[2], lty=2)
+  lines(share_of_votes ~ alpha, data=cs.ref, col=cs.color[1], lty=2)
   with(ss,
-       title(main=sprintf("attacker share\nproposed    realistic/%s    nodes: %i    blocks: %i    iterations: %g",
+       title(main=sprintf("attacker share\nproposed    %s    nodes: %i    blocks: %i    iterations: %g",
                           unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
   legend("topleft", c("votes", "blocks", "honest (= α)"), pch=c(15,15,NULL), col=c(cs.color, "gray"))
+  legend("bottomright", c("simulator", "mcmc"), lty=c(1,2))
 }
 #
 if(interactive()) {
-  cs.plot.net('uniform')
-  cs.plot.net('exponential')
+  cs.plot.net('realistic-uniform')
+  cs.plot.net('realistic-exponential')
+  cs.plot.net('zero')
 } else {
-  fname <- "alpha-share-realistic-exponential.pdf"
-  print(fname)
-  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
-  cs.plot.net('exponential')
-  invisible(dev.off())
-  #
-  fname <- "alpha-share-realistic-uniform.pdf"
-  print(fname)
-  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
-  cs.plot.net('uniform')
-  invisible(dev.off())
+  for (n in c('realistic-uniform', 'realistic-exponential', 'zero')) {
+    fname <- paste0("alpha-share-", n, ".pdf")
+    print(fname)
+    cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+    cs.plot.net(n)
+    dev.off()
+  }
 }
 
 stop("end of script")
