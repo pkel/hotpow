@@ -372,8 +372,10 @@ let result ~p ~s : result =
     let o, c, a = ref 0, ref 0, ref 0 in
     List.iter (fun b ->
         incr o ;
-        if b.confirmed then incr c;
-        if fst (List.hd b.data.quorum) = attacker_id then incr a
+        if b.confirmed then begin
+          incr c;
+          if fst (List.hd b.data.quorum) = attacker_id then incr a
+        end
       ) blocks ;
     assert (!c = p.n_blocks) ;
     !o, !c, !a
@@ -382,9 +384,11 @@ let result ~p ~s : result =
     let o, c, a = ref 0, ref 0, ref 0 in
     List.iter (fun (v : sim_vote) ->
         incr o;
-        if v.confirmed then incr c;
-        let _, id, _ = v.data in
-        if id = attacker_id then incr a
+        if v.confirmed then begin
+          incr c;
+          let _, id, _ = v.data in
+          if id = attacker_id then incr a
+        end
       ) votes ;
     assert (!c = p.n_blocks * p.quorum_size) ;
     !o, !c, !a
