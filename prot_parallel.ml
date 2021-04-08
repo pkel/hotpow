@@ -297,13 +297,24 @@ end = struct
   let read_state t = t.truth.s
   let mem t lnk = mem t.attached lnk || mem t.detached lnk
 
+  let preference vs block =
+    let height = block.height
+    and progress = VoteStore.progress vs block.hash
+    and leadership =
+      let id, sol = List.hd block.b.quorum in
+      - Weight.weigh (block.b.parent, id, sol)
+      (* smaller votes are better, thus negative sign *)
+    in
+    (* Compare by
+     * - longest chain rule, then
+     * - most vote rule, then
+     * - leadership.
+     * We put leadership last to avoid retroactive leader replacement.
+     * We use OCaml's polymorphic compare on this triple *)
+    height, progress, leadership
+
   let update_head t candidate =
-    (* longest chain rule block > most votes rule *)
-    if
-      candidate.height > t.head.height
-      || candidate.height = t.head.height
-         && VoteStore.(
-              progress t.votes candidate.hash > progress t.votes t.head.hash)
+    if preference t.votes candidate > preference t.votes t.head
     then
       let parent' (a : attached) =
         match get t.attached a.b.parent with
@@ -448,7 +459,8 @@ module Spawn (Broadcast : Broadcast) (Config : Config) : Node = struct
           (* Add block if valid *)
           let valid = valid_block ~config block in
           if valid then Chain.add_block chain hash block ;
-          (* Attempt to replace dishonest leader *)
+          (* Replace non-leader, i.e., second smallest vote.
+           * Do not forward dishonest block. *)
           if propose ~replace:false block.parent then false else valid )
 
   (* The simulator triggers this event and sets trivial thresholds. *)
