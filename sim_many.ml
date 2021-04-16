@@ -2,7 +2,7 @@ open Base
 
 (* TODO read from command line *)
 let n_blocks = 2048
-let n_nodes = 32 (* 1024 *)
+let n_nodes = 1000
 let n_iterations = 16
 let n_cores = Cpu.numcores ()
 
