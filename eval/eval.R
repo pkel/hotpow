@@ -19,6 +19,11 @@ pgf <- function(name, data, meta) {
              con=sprintf("../eval/plots/%s.tex", name))
 }
 
+pgf.csv <- function(data, fname) {
+  write.table(data, paste0("../eval/plots/", fname),
+              sep=',', row.names=F, quote=F, na='nan')
+}
+
 # load data
 ###########
 
@@ -178,7 +183,7 @@ ebi <- function(t, ...) {
   ebi.data <- read.block.files(ebi.id, unique(ebi.runs$iteration))
   ebi.intervals <- ebi.data$interval
   ebi.dinterval <- density(ebi.intervals, from=min(ebi.intervals))
-  hist(ebi.intervals, probability=T, main="", xlab="", ylab="", las=1, ...)
+  r <- hist(ebi.intervals, probability=T, main="", xlab="", ylab="", las=1, ...)
   lines(ebi.dinterval$x,
         dgamma(ebi.dinterval$x, shape=q, scale=s),
         col=2, type='l')
@@ -190,6 +195,7 @@ ebi <- function(t, ...) {
   legend("topright",
          c("Gamma distribution", "observed mean", "target interval"),
          col=c(2,1,2), lty=c(1,2,2))
+  invisible(r)
 }
 #
 if (interactive()) {
@@ -219,6 +225,36 @@ if (interactive()) {
   ebi("simplified-exponential-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
   invisible(dev.off())
 }
+
+hist.df <- function(t) {
+  d <- subset(runs, tag==t)
+  intervals <- read.block.files(unique(d$id), unique(d$iteration))$interval
+  with(hist(intervals, breaks=seq(0,10000, 50), plot=F),
+       data.frame(interval.left=breaks,
+                  density=c(density, 0),
+                  counts=c(counts, 0),
+                  tag=t)[0:(1500/50 + 1), ])
+}
+bi.hist.long <- do.call(rbind, lapply(c("simplified-uniform-proposed",
+                                        "simplified-uniform-nc-slow",
+                                        "simplified-exponential-proposed",
+                                        "simplified-exponential-nc-slow",
+                                        "realistic-uniform-proposed",
+                                        "realistic-uniform-nc-slow",
+                                        "realistic-exponential-proposed",
+                                        "realistic-exponential-nc-slow"
+                                        ),
+                                      hist.df))
+bi.hist.wide <- reshape(bi.hist.long, direction="wide",
+                        idvar="interval.left", timevar="tag")
+pgf.csv(bi.hist.wide, "block-interval-hist.csv")
+
+bi.ref.x <- seq(0,1500, 1500/200)
+bi.ref.wide <- data.frame(interval = bi.ref.x,
+                          exponential = dexp(bi.ref.x, rate=1/600),
+                          gamma51 = dgamma(bi.ref.x, rate=51/600, shape=51))
+pgf.csv(bi.ref.wide, "block-interval-ref.csv")
+
 
 # orphan rate as a function of network latency
 ##############################################
@@ -344,6 +380,17 @@ if(interactive()) {
   invisible(dev.off())
 }
 
+lat <- with(or, data.frame(latency = delta.block, # x-axis
+                           mean.interval = mean.interval.mean, # y-axis
+                           mean.interval.low = mean.interval.mean - 1.96 * mean.interval.sd,
+                           mean.interval.high = mean.interval.mean + 1.96 * mean.interval.sd,
+                           distribution = net,
+                           protocol = cfg)
+)
+lat.wide <- reshape(lat, direction="wide", idvar=c("latency", "distribution"), timevar="protocol")
+lat.wide <- reshape(lat.wide, direction="wide", idvar="latency", timevar="distribution")
+pgf.csv(lat.wide, "latency.csv")
+
 # block interval as a function of churn
 #######################################
 # target block interval 600 seconds
@@ -411,6 +458,17 @@ if(interactive()) {
   invisible(dev.off())
 }
 
+churn2 <- with(churn, data.frame(churn = churn, # x-axis
+                                 mean.interval = mean.interval.mean, # y-axis
+                                 mean.interval.low = mean.interval.mean - 1.96 * mean.interval.sd,
+                                 mean.interval.high = mean.interval.mean + 1.96 * mean.interval.sd,
+                                 distribution = net,
+                                 protocol = cfg)
+)
+churn.wide <- reshape(churn2, direction="wide", idvar=c("churn", "distribution"), timevar="protocol")
+churn.wide <- reshape(churn.wide, direction="wide", idvar="churn", timevar="distribution")
+pgf.csv(churn.wide, "churn.csv")
+
 # block interval as a function of leader failure
 ################################################
 # target block interval 600 seconds
@@ -475,6 +533,17 @@ if(interactive()) {
   lf.plot.net('uniform')
   invisible(dev.off())
 }
+
+lf2 <- with(lf, data.frame(failure = leader.failure.rate, # x-axis
+                           mean.interval = mean.interval.mean, # y-axis
+                           mean.interval.low = mean.interval.mean - 1.96 * mean.interval.sd,
+                           mean.interval.high = mean.interval.mean + 1.96 * mean.interval.sd,
+                           distribution = net,
+                           protocol = cfg)
+)
+lf.wide <- reshape(lf2, direction="wide", idvar=c("failure", "distribution"), timevar="protocol")
+lf.wide <- reshape(lf.wide, direction="wide", idvar="failure", timevar="distribution")
+pgf.csv(lf.wide, "failure.csv")
 
 # attacker block/vote share as a function of alpha
 ##################################################
@@ -548,6 +617,19 @@ if(interactive()) {
     dev.off()
   }
 }
+
+cs2 <- with(cs, data.frame(attacker = alpha , # x-axis
+                           share.blocks = attacker.share.blocks.mean, # y-axis
+                           share.blocks.low = attacker.share.blocks.mean - 1.96 * attacker.share.blocks.sd,
+                           share.blocks.high = attacker.share.blocks.mean + 1.96 * attacker.share.blocks.sd,
+                           share.votes = attacker.share.votes.mean, # y-axis
+                           share.votes.low = attacker.share.votes.mean - 1.96 * attacker.share.votes.sd,
+                           share.votes.high = attacker.share.votes.mean + 1.96 * attacker.share.votes.sd,
+                           net = net # config
+       )
+)
+cs.wide <- reshape(cs2, direction="wide", idvar="attacker", timevar="net")
+pgf.csv(cs.wide, "attacker.csv")
 
 stop("end of script")
 
