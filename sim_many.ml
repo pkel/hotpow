@@ -1,8 +1,8 @@
 open Base
 
 (* TODO read from command line *)
-let n_blocks = 2048
-let n_nodes = 1000
+let n_blocks = 1024
+let n_nodes = 1024
 let n_iterations = 16
 let n_cores = Cpu.numcores ()
 
@@ -136,15 +136,34 @@ let () =
     range 0 6 |> map (fun x -> rational (1 lsl x) 4) (* 1/4 ... 16 *)
   in
   iter deltas (fun d ->
-      iter scenarios (fun (s, cfg) ->
+      iter scenarios (fun (s, realistic) ->
+          let simple = simplify realistic in
           let cfg =
-            { cfg with delta_vote= d
-                     ; delta_block= d
+            { simple with delta_vote= d
+                        ; delta_block= d
             }
           in
           schedule ~tag:("latency-simplified-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
           schedule ~tag:("latency-simplified-uniform-" ^ s)
+            { cfg with delta_dist=Uniform}
+        ))
+
+(* All scenarios, realistic networks, varying number of nodes *)
+let () =
+  let sizes =
+    range 1 13 |> map (fun x -> 1 lsl x)
+  in
+  iter sizes (fun n_nodes ->
+      iter scenarios (fun (s, cfg) ->
+          let cfg =
+            { cfg with n_nodes
+                     ; alpha = rational 1 n_nodes
+            }
+          in
+          schedule ~tag:("nodes-realistic-exponential-" ^ s)
+            { cfg with delta_dist=Exponential};
+          schedule ~tag:("nodes-realistic-uniform-" ^ s)
             { cfg with delta_dist=Uniform}
         ))
 
