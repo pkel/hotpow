@@ -54,7 +54,7 @@ uniq.or.fail <- function (v) {
 pgf("all",
     runs.agg,
     with(runs.agg,
-         list(nNodes = uniq.or.fail(n.nodes),
+         list(nNodes = uniq.or.fail(median(n.nodes)),
               nBlocks = uniq.or.fail(n.blocks),
               nConfirmations = uniq.or.fail(confirmations),
               nIterations = uniq.or.fail(n.iterations))))
@@ -390,6 +390,84 @@ lat <- with(or, data.frame(latency = delta.block, # x-axis
 lat.wide <- reshape(lat, direction="wide", idvar=c("latency", "distribution"), timevar="protocol")
 lat.wide <- reshape(lat.wide, direction="wide", idvar="latency", timevar="distribution")
 pgf.csv(lat.wide, "latency.csv")
+
+# block interval as a function of network size
+##############################################
+# target block interval 600 seconds
+# two networks: uniform, exponential, simplified latency model
+# two scenarios: nc-slow, k=51/proposed
+# x-axis: number of nodes
+# y-axis: block interval
+
+size.tags <- tags[startsWith(tags, "nodes-realistic")]
+size.df.of.tag <- function(tag) {
+  d <- runs.agg[runs.agg$tag == tag, ]
+  s <- strsplit(sub("nodes-realistic-", "", tag), "-")[[1]]
+  d$net <- s[1]
+  d$cfg <- paste0(tail(s, -1), collapse="-")
+  return(d)
+}
+size <- data.frame(do.call(rbind, lapply(size.tags, size.df.of.tag)))
+size$net <- as.factor(size$net)
+size$cfg <- as.factor(size$cfg)
+if(interactive()){
+  str(size)
+}
+
+size.color   <- colorspace::rainbow_hcl(length(levels(size$cfg)))
+size.color.3 <- colorspace::rainbow_hcl(length(levels(size$cfg)), alpha=0.3)
+
+size.plot.net <- function(net) {
+  ss <- size[size$net==net & as.character(size$cfg) %in% c('proposed', 'nc-slow'), ]
+  plot(1, 1,
+       log='x', xaxt='n', type='n', las=2,
+       ylim=range(ss$mean.interval.mean),
+       xlim=range(ss$n.nodes),
+       ylab='',
+       xlab='number of nodes')
+  lapply(unique(ss$cfg), function (x) {
+           d <- subset(ss, cfg==x)
+             polygon(c(rev(d$n.nodes), d$n.nodes),
+                     c(rev(d$mean.interval.mean + d$mean.interval.sd),
+                       d$mean.interval.mean - d$mean.interval.sd),
+                     col = or.color.3[x], border = NA)
+           lines(mean.interval.mean ~ n.nodes, col=or.color[x], data=d)
+       })
+  axis(side=1, at=unique(ss$n.nodes))
+  with(ss,
+       title(main=sprintf("block interval\nrealistic/%s    blocks: %i    iterations: %g",
+                          unique(net) , unique(n.blocks), unique(n.iterations))))
+  legend('bottomright', title='configuration', legend = levels(or$cfg)[unique(ss$cfg)],
+         col=or.color[unique(ss$cfg)], pch=15)
+}
+#
+if(interactive()) {
+  # size.plot.net('uniform')
+  size.plot.net('exponential')
+} else {
+  fname <- paste0("size-block-interval-realistic-exponential",".pdf")
+  print(fname)
+  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  size.plot.net('exponential')
+  invisible(dev.off())
+  #
+  # fname <- paste0("size-block-interval-realistic-uniform",".pdf")
+  # print(fname)
+  # cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  # lat.plot.net('uniform')
+  # invisible(dev.off())
+}
+
+size2 <- with(size, data.frame(size = n.nodes, # x-axis
+                               mean.interval = mean.interval.mean, # y-axis
+                               mean.interval.low = mean.interval.mean - 1.96 * mean.interval.sd,
+                               mean.interval.high = mean.interval.mean + 1.96 * mean.interval.sd,
+                               distribution = net,
+                               protocol = cfg)
+)
+size.wide <- reshape(size2, direction="wide", idvar=c("size", "distribution"), timevar="protocol")
+size.wide <- reshape(size.wide, direction="wide", idvar="size", timevar="distribution")
+pgf.csv(size.wide, "size.csv")
 
 # block interval as a function of churn
 #######################################
