@@ -1,7 +1,7 @@
 open Base
 
 (* TODO read from command line *)
-let n_blocks = 1024
+let n_blocks = 2048
 let n_nodes = 1024
 let n_iterations = 16
 let n_cores = Cpu.numcores ()
@@ -145,8 +145,10 @@ let () =
           in
           schedule ~tag:("latency-simplified-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
+          (* not in current version of paper
           schedule ~tag:("latency-simplified-uniform-" ^ s)
             { cfg with delta_dist=Uniform}
+           *)
         ))
 
 (* All scenarios, realistic networks, varying number of nodes *)
@@ -163,8 +165,10 @@ let () =
           in
           schedule ~tag:("nodes-realistic-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
+          (* not in current version of paper
           schedule ~tag:("nodes-realistic-uniform-" ^ s)
             { cfg with delta_dist=Uniform}
+           *)
         ))
 
 (* All scenarios, realistic networks, varying churn ratios. *)
@@ -177,8 +181,10 @@ let () =
           let cfg = { cfg with churn } in
           schedule ~tag:("churn-realistic-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
+          (* not in current version of paper
           schedule ~tag:("churn-realistic-uniform-" ^ s)
             { cfg with delta_dist=Uniform}
+           *)
         ))
 
 (* All scenarios, realistic networks, varying leader failure rates. *)
@@ -191,8 +197,10 @@ let () =
           let cfg = { cfg with leader_failure_rate } in
           schedule ~tag:("failure-realistic-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
+          (* not in current version of paper
           schedule ~tag:("failure-realistic-uniform-" ^ s)
             { cfg with delta_dist=Uniform}
+           *)
         ))
 
 (* Censor attack, proposed scenario, realistic networks, varying alpha. *)
@@ -207,6 +215,7 @@ let () =
         } in
       schedule ~tag:"censor-realistic-exponential-proposed"
         { cfg with delta_dist=Exponential};
+      (* not in current version of paper
       schedule ~tag:"censor-realistic-uniform-proposed"
         { cfg with delta_dist=Uniform};
       let cfg =
@@ -214,6 +223,7 @@ let () =
                  ; delta_block= 0.
         } in
       schedule ~tag:"censor-zero-proposed" cfg
+       *)
     )
 
 let run_cols : (string * task) Simulator.column list =
