@@ -315,7 +315,7 @@ or.plot.net <- function(net) {
 }
 #
 if(interactive()) {
-  or.plot.net('uniform')
+  # or.plot.net('uniform')
   or.plot.net('exponential')
 } else {
   fname <- paste0("latency-orphan-rate-simplified-exponential",".pdf")
@@ -324,11 +324,11 @@ if(interactive()) {
   or.plot.net('exponential')
   invisible(dev.off())
   #
-  fname <- paste0("latency-orphan-rate-simplified-uniform",".pdf")
-  print(fname)
-  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
-  or.plot.net('uniform')
-  invisible(dev.off())
+  # fname <- paste0("latency-orphan-rate-simplified-uniform",".pdf")
+  # print(fname)
+  # cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  # or.plot.net('uniform')
+  # invisible(dev.off())
 }
 
 # block interval as a function of network latency
@@ -364,7 +364,7 @@ lat.plot.net <- function(net) {
 }
 #
 if(interactive()) {
-  lat.plot.net('uniform')
+  # lat.plot.net('uniform')
   lat.plot.net('exponential')
 } else {
   fname <- paste0("latency-block-interval-simplified-exponential",".pdf")
@@ -373,11 +373,11 @@ if(interactive()) {
   lat.plot.net('exponential')
   invisible(dev.off())
   #
-  fname <- paste0("latency-block-interval-simplified-uniform",".pdf")
-  print(fname)
-  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
-  lat.plot.net('uniform')
-  invisible(dev.off())
+  # fname <- paste0("latency-block-interval-simplified-uniform",".pdf")
+  # print(fname)
+  # cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  # lat.plot.net('uniform')
+  # invisible(dev.off())
 }
 
 lat <- with(or, data.frame(latency = delta.block, # x-axis
@@ -442,7 +442,7 @@ churn.plot.net <- function(net) {
 }
 #
 if(interactive()) {
-  churn.plot.net('uniform')
+  # churn.plot.net('uniform')
   churn.plot.net('exponential')
 } else {
   fname <- "churn-block-interval-realistic-exponential.pdf"
@@ -451,11 +451,11 @@ if(interactive()) {
   churn.plot.net('exponential')
   invisible(dev.off())
   #
-  fname <- "churn-block-interval-realistic-uniform.pdf"
-  print(fname)
-  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
-  churn.plot.net('uniform')
-  invisible(dev.off())
+  # fname <- "churn-block-interval-realistic-uniform.pdf"
+  # print(fname)
+  # cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  # churn.plot.net('uniform')
+  # invisible(dev.off())
 }
 
 churn2 <- with(churn, data.frame(churn = churn, # x-axis
@@ -518,7 +518,7 @@ lf.plot.net <- function(net) {
 }
 #
 if(interactive()) {
-  lf.plot.net('uniform')
+  # lf.plot.net('uniform')
   lf.plot.net('exponential')
 } else {
   fname <- "failure-block-interval-realistic-exponential.pdf"
@@ -527,11 +527,11 @@ if(interactive()) {
   lf.plot.net('exponential')
   invisible(dev.off())
   #
-  fname <- "failure-block-interval-realistic-uniform.pdf"
-  print(fname)
-  cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
-  lf.plot.net('uniform')
-  invisible(dev.off())
+  # fname <- "failure-block-interval-realistic-uniform.pdf"
+  # print(fname)
+  # cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
+  # lf.plot.net('uniform')
+  # invisible(dev.off())
 }
 
 lf2 <- with(lf, data.frame(failure = leader.failure.rate, # x-axis
@@ -605,11 +605,11 @@ cs.plot.net <- function(net) {
 }
 #
 if(interactive()) {
-  cs.plot.net('realistic-uniform')
+  # cs.plot.net('realistic-uniform')
   cs.plot.net('realistic-exponential')
-  cs.plot.net('zero')
+  # cs.plot.net('zero')
 } else {
-  for (n in c('realistic-uniform', 'realistic-exponential', 'zero')) {
+  for (n in c('realistic-exponential')) {
     fname <- paste0("alpha-share-", n, ".pdf")
     print(fname)
     cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
