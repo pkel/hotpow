@@ -343,10 +343,11 @@ end = struct
           t.truth <- new_truth
         with Not_found -> () in
       (* garbage collect old attached blocks *)
-      if t.head.height mod 100 = 0 then (
-        let cutoff = t.head.height - 100 in
-        gc ~keep:(fun b -> b.height > cutoff) t.attached ;
-        gc ~keep:(fun b -> b.received_at > cutoff) t.detached ;
+      (* tweak 42 if simulator runs out of memory *)
+      if t.head.height mod 42 = 0 then (
+        let cutoff = t.head.height - t.confirmations - 1 in
+        gc ~keep:(fun b -> b.height >= cutoff) t.attached ;
+        gc ~keep:(fun b -> b.received_at >= cutoff) t.detached ;
         VoteStore.gc ~keep:(mem t) t.votes )
 
   let rec attach t (to_ : attached) =
