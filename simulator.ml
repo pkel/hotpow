@@ -122,7 +122,8 @@ type sim_block =
   ; mutable confirmed: bool (* modified after simulation *) }
 
 type result =
-  { blocks_observed: int
+  { messages_sent: int
+  ; blocks_observed: int
   ; blocks_confirmed: int
   ; votes_observed: int
   ; votes_confirmed: int
@@ -164,6 +165,7 @@ let cols : row column list =
   ; {title= "churn"; f= (fun x -> f x.p.churn)}
   ; {title= "churn.eclipse.time"; f= (fun x -> f x.p.eclipse_time)}
   ; {title= "leader.failure.rate"; f= (fun x -> f x.p.leader_failure_rate)}
+  ; {title= "messages.sent"; f= (fun x -> i x.r.messages_sent)}
   ; {title= "blocks.observed"; f= (fun x -> i x.r.blocks_observed)}
   ; {title= "blocks.confirmed"; f= (fun x -> i x.r.blocks_confirmed)}
   ; {title= "votes.observed"; f= (fun x -> i x.r.votes_observed)}
@@ -238,6 +240,7 @@ type state =
   { mutable height: int
   ; mutable atv_cnt: int
   ; mutable shutdown: bool
+  ; mutable messages_sent: int
   ; target_height: int
   ; nodes: node array
   ; scheduler: event scheduler
@@ -269,6 +272,7 @@ let handle_event ~p ~s =
     | Broadcast {src; cnt; m} ->
         let lat =
           match m with Vote _ -> p.delta_vote | Block _ -> p.delta_block in
+        s.messages_sent <- max cnt s.messages_sent;
         Array.iteri
           (fun rcv _ ->
             if rcv <> src then
@@ -393,7 +397,8 @@ let result ~p ~s : result =
     assert (!c = p.n_blocks * p.quorum_size) ;
     !o, !c, !a
   in
-  { blocks_confirmed
+  { messages_sent= s.messages_sent
+  ; blocks_confirmed
   ; blocks_observed
   ; votes_confirmed
   ; votes_observed
@@ -424,6 +429,7 @@ let init ~p =
   { height= 0
   ; atv_cnt= 0
   ; shutdown= false
+  ; messages_sent= 0
   ; target_height= p.n_blocks + p.confirmations
   ; nodes
   ; scheduler
