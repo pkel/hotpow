@@ -123,6 +123,7 @@ type sim_block =
 
 type result =
   { messages_sent: int
+  ; activations: int
   ; blocks_observed: int
   ; blocks_confirmed: int
   ; votes_observed: int
@@ -166,6 +167,7 @@ let cols : row column list =
   ; {title= "churn.eclipse.time"; f= (fun x -> f x.p.eclipse_time)}
   ; {title= "leader.failure.rate"; f= (fun x -> f x.p.leader_failure_rate)}
   ; {title= "messages.sent"; f= (fun x -> i x.r.messages_sent)}
+  ; {title= "activations"; f= (fun x -> i x.r.activations)}
   ; {title= "blocks.observed"; f= (fun x -> i x.r.blocks_observed)}
   ; {title= "blocks.confirmed"; f= (fun x -> i x.r.blocks_confirmed)}
   ; {title= "votes.observed"; f= (fun x -> i x.r.votes_observed)}
@@ -186,7 +188,7 @@ type net_event =
   | Broadcast of {src: int; cnt: int; m: message}
   | Deliver of {src: int; rcv: int; cnt: int; m: message}
 
-type event = ATV of {nth: int; node: int} | Net of net_event | Shutdown
+type event = ATV of {node: int} | Net of net_event | Shutdown
 type eclipse = {till: float; queue: net_event Queue.t}
 type node = {m: (module Node); pubkey: DSA.public_key ; mutable eclipse: eclipse option}
 
@@ -208,7 +210,7 @@ let string_of_event =
       sprintf "n%i sends m%i: %s" src cnt (string_of_message m)
   | Net (Deliver {rcv; cnt; m; _}) ->
       sprintf "deliver m%i to n%i: %s" cnt rcv (string_of_message m)
-  | ATV {nth; node} -> sprintf "assign %ith ATV to n%i" nth node
+  | ATV {node} -> sprintf "activate n%i" node
   | Shutdown -> sprintf "stop simulation"
 
 include struct
@@ -239,8 +241,8 @@ end
 type state =
   { mutable height: int
   ; mutable atv_cnt: int
+  ; msg_cnt: int ref
   ; mutable shutdown: bool
-  ; mutable messages_sent: int
   ; target_height: int
   ; nodes: node array
   ; scheduler: event scheduler
@@ -262,7 +264,7 @@ let schedule_atv ~p ~s =
   and node =
     if Random.float 1. <= p.alpha then 0
     else Random.int (Array.length s.nodes - 1) + 1 in
-  s.scheduler#schedule ~delay (ATV {nth= s.atv_cnt; node})
+  s.scheduler#schedule ~delay (ATV {node})
 
 let handle_event ~p ~s =
   let handle_net = function
@@ -272,7 +274,7 @@ let handle_event ~p ~s =
     | Broadcast {src; cnt; m} ->
         let lat =
           match m with Vote _ -> p.delta_vote | Block _ -> p.delta_block in
-        s.messages_sent <- max cnt s.messages_sent;
+        incr s.msg_cnt;
         Array.iteri
           (fun rcv _ ->
             if rcv <> src then
@@ -291,11 +293,11 @@ let handle_event ~p ~s =
         Queue.iter handle_net eclipse.queue ;
         n.eclipse <- None in
   function
-  | ATV {node; nth} ->
+  | ATV {node} ->
       if not s.shutdown then (
         let (module N : Node) = s.nodes.(node).m in
         s.atv_cnt <- s.atv_cnt + 1 ;
-        N.on_atv nth ;
+        N.on_atv s.atv_cnt ;
         schedule_atv ~p ~s )
   | Shutdown -> Array.iter uneclipse s.nodes
   | Net ev -> (
@@ -314,17 +316,15 @@ let handle_event ~p ~s =
 
 let quorum_threshold = Weight.max_weight
 
-let broadcast =
-  let message_cnt = ref 0 in
-  fun (scheduler : event scheduler) nr ->
+let broadcast ~msg_cnt (scheduler : event scheduler) src =
     let module B = struct
       let send m =
-        incr message_cnt ;
-        scheduler#schedule (Net (Broadcast {cnt= !message_cnt; m; src= nr}))
+        incr msg_cnt ;
+        scheduler#schedule (Net (Broadcast {cnt= !msg_cnt; m; src}))
     end in
     (module B : Broadcast)
 
-let spawn ~p scheduler id secret strategy =
+let spawn ~p ~msg_cnt scheduler id secret strategy =
   let module Config = struct
     let quorum_size = p.quorum_size
     let quorum_threshold = quorum_threshold
@@ -333,7 +333,7 @@ let spawn ~p scheduler id secret strategy =
     let my_secret = secret
     let now () = scheduler#now
   end in
-  let (module Broadcast) = broadcast scheduler DSA.(int_of_id id)
+  let (module Broadcast) = broadcast ~msg_cnt scheduler DSA.(int_of_id id)
   and (module Implementation) = implementation_of_strategy strategy in
   (module Implementation.Spawn (Broadcast) (Config) : Node)
 
@@ -397,7 +397,8 @@ let result ~p ~s : result =
     assert (!c = p.n_blocks * p.quorum_size) ;
     !o, !c, !a
   in
-  { messages_sent= s.messages_sent
+  { activations= s.atv_cnt
+  ; messages_sent= !(s.msg_cnt)
   ; blocks_confirmed
   ; blocks_observed
   ; votes_confirmed
@@ -410,11 +411,12 @@ let result ~p ~s : result =
 
 let init ~p =
   let scheduler = new scheduler in
+  let msg_cnt = ref 0 in
   let nodes : node array =
     Array.init p.n_nodes (fun i ->
         let pubkey, secret = DSA.id_of_int i in
         let code = if i = 0 then p.strategy else p.protocol in
-        {m = spawn ~p scheduler pubkey secret code; pubkey; eclipse= None})
+        {m = spawn ~p ~msg_cnt scheduler pubkey secret code; pubkey; eclipse= None})
   in
   let () =
     (* eclipse first set of nodes *)
@@ -428,8 +430,8 @@ let init ~p =
     eclipse n in
   { height= 0
   ; atv_cnt= 0
+  ; msg_cnt= ref 0
   ; shutdown= false
-  ; messages_sent= 0
   ; target_height= p.n_blocks + p.confirmations
   ; nodes
   ; scheduler
