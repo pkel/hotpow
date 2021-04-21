@@ -111,13 +111,13 @@ let simplify cfg =
            ; delta_block = synchrony
   }
 
-(* All scenarios, simplified networks *)
+(* All scenarios, simple networks *)
 let () =
   iter scenarios (fun (s, cfg) ->
       let cfg = simplify cfg in
-      schedule ~tag:("simplified-exponential-" ^ s)
+      schedule ~tag:("simple-exponential-" ^ s)
         {cfg with delta_dist=Exponential};
-      schedule ~tag:("simplified-uniform-" ^ s)
+      schedule ~tag:("simple-uniform-" ^ s)
         {cfg with delta_dist=Uniform}
     )
 
@@ -130,7 +130,7 @@ let () =
         { cfg with delta_dist=Uniform}
     )
 
-(* All scenarios, simplified networks, varying expected latency. *)
+(* All scenarios, simple networks, varying expected latency. *)
 let () =
   let deltas =
     range 0 6 |> map (fun x -> rational (1 lsl x) 4) (* 1/4 ... 16 *)
@@ -143,10 +143,10 @@ let () =
                         ; delta_block= d
             }
           in
-          schedule ~tag:("latency-simplified-exponential-" ^ s)
+          schedule ~tag:("latency-simple-exponential-" ^ s)
             { cfg with delta_dist=Exponential};
           (* not in current version of paper
-          schedule ~tag:("latency-simplified-uniform-" ^ s)
+          schedule ~tag:("latency-simple-uniform-" ^ s)
             { cfg with delta_dist=Uniform}
            *)
         ))

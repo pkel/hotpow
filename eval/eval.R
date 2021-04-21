@@ -30,6 +30,7 @@ pgf.csv <- function(data, fname) {
 runs <- read.csv('runs.csv')
 if(interactive()) str(runs)
 
+runs$messages.sent.rel <- with(runs, messages.sent / quorum.size / (blocks.confirmed + confirmations))
 runs$delta.dist <- as.factor(runs$delta.dist)
 runs$block.orphan.rate <- with(runs, (blocks.observed - blocks.confirmed) / blocks.observed)
 runs$vote.orphan.rate <- with(runs, (votes.observed - votes.confirmed) / votes.observed)
@@ -37,7 +38,7 @@ runs$attacker.share.blocks <- with(runs, attacker.blocks.confirmed / blocks.conf
 runs$attacker.share.votes <- with(runs, attacker.votes.confirmed / votes.confirmed)
 
 # aggregate iterations
-runs.agg <- aggregate(cbind(mean.interval, attacker.share.blocks, attacker.share.votes, vote.orphan.rate, block.orphan.rate, messages.sent) ~
+runs.agg <- aggregate(cbind(mean.interval, attacker.share.blocks, attacker.share.votes, vote.orphan.rate, block.orphan.rate, messages.sent, messages.sent.rel) ~
                       tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations + churn + leader.failure.rate + alpha + strategy,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
@@ -96,7 +97,7 @@ read.block.files <- function(ids, iterations) {
   data.frame(id, iteration, interval, published.at, height)
 }
 
-bi.tags <- tags[startsWith(tags, "simplified") | startsWith(tags, "realistic")]
+bi.tags <- tags[startsWith(tags, "simple") | startsWith(tags, "realistic")]
 #
 # summarize all configs in a table
 bi.row.of.tag <- function(tag) {
@@ -124,16 +125,16 @@ colnames(bi.stats.wide) <- sub("nc-slow", "btc", colnames(bi.stats.wide))
 bi.rows <- with(bi.stats.wide,
                 paste(sprintf("\\textbf{%s}", net.lat),
                       sprintf("\\textbf{%s}", net.dis),
-                      sprintf("%g", round(mean.proposed, 1)),
-                      sprintf("%g", round(mean.btc     , 1)),
-                      sprintf("%g", round(sd.proposed  , 1)),
-                      sprintf("%g", round(sd.btc       , 1)),
-                      sprintf("%g", round(q50.proposed , 1)),
-                      sprintf("%g", round(q50.btc      , 1)),
-                      sprintf("%g", round(q95.proposed , 1)),
-                      sprintf("%g", round(q95.btc      , 1)),
-                      sprintf("%g", round(q99.proposed , 1)),
-                      sprintf("%g", round(q99.btc      , 1)),
+                      sprintf("%.1f", round(mean.proposed, 1)),
+                      sprintf("%.1f", round(mean.btc     , 1)),
+                      sprintf("%.1f", round(sd.proposed  , 1)),
+                      sprintf("%.1f", round(sd.btc       , 1)),
+                      sprintf("%.1f", round(q50.proposed , 1)),
+                      sprintf("%.1f", round(q50.btc      , 1)),
+                      sprintf("%.1f", round(q95.proposed , 1)),
+                      sprintf("%.1f", round(q95.btc      , 1)),
+                      sprintf("%.1f", round(q99.proposed , 1)),
+                      sprintf("%.1f", round(q99.btc      , 1)),
                       sep = " & "))
 bi.lns <- c(paste0("\\begin{tabular}{ll",
                      "S[table-format=3.1]", # mean
@@ -199,30 +200,30 @@ ebi <- function(t, ...) {
 }
 #
 if (interactive()) {
-  ebi("simplified-uniform-proposed")
-  ebi("simplified-uniform-nc-slow")
-  ebi("simplified-uniform-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
-  ebi("simplified-uniform-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
+  ebi("simple-uniform-proposed")
+  ebi("simple-uniform-nc-slow")
+  ebi("simple-uniform-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
+  ebi("simple-uniform-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
 } else {
-  fname <- paste0("block-interval-simplified-uniform-proposed.pdf")
+  fname <- paste0("block-interval-simple-uniform-proposed.pdf")
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
-  ebi("simplified-uniform-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
+  ebi("simple-uniform-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
   #
-  fname <- paste0("block-interval-simplified-uniform-nc-slow.pdf")
+  fname <- paste0("block-interval-simple-uniform-nc-slow.pdf")
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
-  ebi("simplified-uniform-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
+  ebi("simple-uniform-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
   #
-  fname <- paste0("block-interval-simplified-exponential-proposed.pdf")
+  fname <- paste0("block-interval-simple-exponential-proposed.pdf")
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
-  ebi("simplified-exponential-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
+  ebi("simple-exponential-proposed", breaks=seq(0,1800,50), ylim=c(0, 0.005))
   #
-  fname <- paste0("block-interval-simplified-exponential-nc-slow.pdf")
+  fname <- paste0("block-interval-simple-exponential-nc-slow.pdf")
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=4)
-  ebi("simplified-exponential-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
+  ebi("simple-exponential-nc-slow", breaks=seq(0,9999,50), xlim=c(0, 1800), ylim=c(0, 0.005))
   invisible(dev.off())
 }
 
@@ -235,10 +236,10 @@ hist.df <- function(t) {
                   counts=c(counts, 0),
                   tag=t)[0:(1500/50 + 1), ])
 }
-bi.hist.long <- do.call(rbind, lapply(c("simplified-uniform-proposed",
-                                        "simplified-uniform-nc-slow",
-                                        "simplified-exponential-proposed",
-                                        "simplified-exponential-nc-slow",
+bi.hist.long <- do.call(rbind, lapply(c("simple-uniform-proposed",
+                                        "simple-uniform-nc-slow",
+                                        "simple-exponential-proposed",
+                                        "simple-exponential-nc-slow",
                                         "realistic-uniform-proposed",
                                         "realistic-uniform-nc-slow",
                                         "realistic-exponential-proposed",
@@ -259,15 +260,15 @@ pgf.csv(bi.ref.wide, "block-interval-ref.csv")
 # orphan rate as a function of network latency
 ##############################################
 # target block interval 600 seconds
-# two networks: uniform, exponential, simplified latency model
+# two networks: uniform, exponential, simple latency model
 # three scenarios: nc-fast, nc-slow, k=51/proposed
 # x-axis: δ = 1/4 ... 16
 # y-axis: orphan rate blocks + votes for k>1
 
-or.tags <- tags[startsWith(tags, "latency-simplified")]
+or.tags <- tags[startsWith(tags, "latency-simple")]
 or.df.of.tag <- function(tag) {
   d <- runs.agg[runs.agg$tag == tag, ]
-  s <- strsplit(sub("latency-simplified-", "", tag), "-")[[1]]
+  s <- strsplit(sub("latency-simple-", "", tag), "-")[[1]]
   d$net <- s[1]
   d$cfg <- paste0(tail(s, -1), collapse="-")
   return(d)
@@ -307,7 +308,7 @@ or.plot.net <- function(net) {
        })
   axis(side=1, at=unique(ss$delta.block))
   with(ss,
-       title(main=sprintf("orphan rate\nsimplified/%s    nodes: %i    blocks: %i    iterations: %g",
+       title(main=sprintf("orphan rate\nsimple/%s    nodes: %i    blocks: %i    iterations: %g",
                           unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
   legend('bottomright', title='configuration', legend = levels(or$cfg),
          col=or.color, pch=15)
@@ -318,13 +319,13 @@ if(interactive()) {
   # or.plot.net('uniform')
   or.plot.net('exponential')
 } else {
-  fname <- paste0("latency-orphan-rate-simplified-exponential",".pdf")
+  fname <- paste0("latency-orphan-rate-simple-exponential",".pdf")
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
   or.plot.net('exponential')
   invisible(dev.off())
   #
-  # fname <- paste0("latency-orphan-rate-simplified-uniform",".pdf")
+  # fname <- paste0("latency-orphan-rate-simple-uniform",".pdf")
   # print(fname)
   # cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
   # or.plot.net('uniform')
@@ -334,7 +335,7 @@ if(interactive()) {
 # block interval as a function of network latency
 #################################################
 # target block interval 600 seconds
-# two networks: uniform, exponential, simplified latency model
+# two networks: uniform, exponential, simple latency model
 # two scenarios: nc-slow, k=51/proposed
 # x-axis: δ = 1/4 ... 16
 # y-axis: block interval
@@ -357,7 +358,7 @@ lat.plot.net <- function(net) {
        })
   axis(side=1, at=unique(ss$delta.block))
   with(ss,
-       title(main=sprintf("block interval\nsimplified/%s    nodes: %i    blocks: %i    iterations: %g",
+       title(main=sprintf("block interval\nsimple/%s    nodes: %i    blocks: %i    iterations: %g",
                           unique(net), unique(n.nodes), unique(n.blocks), unique(n.iterations))))
   legend('bottomright', title='configuration', legend = levels(or$cfg)[unique(ss$cfg)],
          col=or.color[unique(ss$cfg)], pch=15)
@@ -367,13 +368,13 @@ if(interactive()) {
   # lat.plot.net('uniform')
   lat.plot.net('exponential')
 } else {
-  fname <- paste0("latency-block-interval-simplified-exponential",".pdf")
+  fname <- paste0("latency-block-interval-simple-exponential",".pdf")
   print(fname)
   cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
   lat.plot.net('exponential')
   invisible(dev.off())
   #
-  # fname <- paste0("latency-block-interval-simplified-uniform",".pdf")
+  # fname <- paste0("latency-block-interval-simple-uniform",".pdf")
   # print(fname)
   # cairo_pdf(paste0("../eval/plots/", fname), width=7, height=5)
   # lat.plot.net('uniform')
@@ -394,7 +395,7 @@ pgf.csv(lat.wide, "latency.csv")
 # block interval as a function of network size
 ##############################################
 # target block interval 600 seconds
-# two networks: uniform, exponential, simplified latency model
+# two networks: uniform, exponential, simple latency model
 # two scenarios: nc-slow, k=51/proposed
 # x-axis: number of nodes
 # y-axis: block interval
@@ -420,18 +421,18 @@ size.color.3 <- colorspace::rainbow_hcl(length(levels(size$cfg)), alpha=0.3)
 size.plot.net <- function(net) {
   ss <- size[size$net==net & as.character(size$cfg) %in% c('proposed', 'nc-slow'), ]
   plot(1, 1,
-       log='xy', xaxt='n', type='n', las=2,
-       ylim=range(ss$messages.sent.mean),
+       log='x', xaxt='n', type='n', las=2,
+       ylim=range(ss$messages.sent.rel.mean),
        xlim=range(ss$n.nodes),
        ylab='',
        xlab='number of nodes')
   lapply(unique(ss$cfg), function (x) {
            d <- subset(ss, cfg==x)
              polygon(c(rev(d$n.nodes), d$n.nodes),
-                     c(rev(d$messages.sent.mean + d$messages.sent.sd),
-                       d$messages.sent.mean - d$messages.sent.sd),
+                     c(rev(d$messages.sent.rel.mean + d$messages.sent.rel.sd),
+                       d$messages.sent.rel.mean - d$messages.sent.rel.sd),
                      col = or.color.3[x], border = NA)
-           lines(messages.sent.mean ~ n.nodes, col=or.color[x], data=d)
+           lines(messages.sent.rel.mean ~ n.nodes, col=or.color[x], data=d)
        })
   axis(side=1, at=unique(ss$n.nodes))
   with(ss,
@@ -465,6 +466,9 @@ size2 <- with(size, data.frame(size = n.nodes, # x-axis
                                messages = messages.sent.mean,
                                messages.low = messages.sent.mean - 1.96 * messages.sent.sd,
                                messages.high = messages.sent.mean + 1.96 * messages.sent.sd,
+                               messages.rel = messages.sent.rel.mean,
+                               messages.rel.low = messages.sent.rel.mean - 1.96 * messages.sent.rel.sd,
+                               messages.rel.high = messages.sent.rel.mean + 1.96 * messages.sent.rel.sd,
                                distribution = net, # group
                                protocol = cfg)
 )
