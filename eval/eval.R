@@ -37,7 +37,7 @@ runs$attacker.share.blocks <- with(runs, attacker.blocks.confirmed / blocks.conf
 runs$attacker.share.votes <- with(runs, attacker.votes.confirmed / votes.confirmed)
 
 # aggregate iterations
-runs.agg <- aggregate(cbind(mean.interval, attacker.share.blocks, attacker.share.votes, vote.orphan.rate, block.orphan.rate) ~
+runs.agg <- aggregate(cbind(mean.interval, attacker.share.blocks, attacker.share.votes, vote.orphan.rate, block.orphan.rate, messages.sent) ~
                       tag + pow.scale + quorum.size + delta.block + delta.vote + delta.dist + n.nodes + n.blocks + confirmations + churn + leader.failure.rate + alpha + strategy,
                       runs,
                       function (x) c("mean"=mean(x), "sd"=sd(x)))
@@ -420,22 +420,22 @@ size.color.3 <- colorspace::rainbow_hcl(length(levels(size$cfg)), alpha=0.3)
 size.plot.net <- function(net) {
   ss <- size[size$net==net & as.character(size$cfg) %in% c('proposed', 'nc-slow'), ]
   plot(1, 1,
-       log='x', xaxt='n', type='n', las=2,
-       ylim=range(ss$mean.interval.mean),
+       log='xy', xaxt='n', type='n', las=2,
+       ylim=range(ss$messages.sent.mean),
        xlim=range(ss$n.nodes),
        ylab='',
        xlab='number of nodes')
   lapply(unique(ss$cfg), function (x) {
            d <- subset(ss, cfg==x)
              polygon(c(rev(d$n.nodes), d$n.nodes),
-                     c(rev(d$mean.interval.mean + d$mean.interval.sd),
-                       d$mean.interval.mean - d$mean.interval.sd),
+                     c(rev(d$messages.sent.mean + d$messages.sent.sd),
+                       d$messages.sent.mean - d$messages.sent.sd),
                      col = or.color.3[x], border = NA)
-           lines(mean.interval.mean ~ n.nodes, col=or.color[x], data=d)
+           lines(messages.sent.mean ~ n.nodes, col=or.color[x], data=d)
        })
   axis(side=1, at=unique(ss$n.nodes))
   with(ss,
-       title(main=sprintf("block interval\nrealistic/%s    blocks: %i    iterations: %g",
+       title(main=sprintf("messages sent\nrealistic/%s    blocks: %i    iterations: %g",
                           unique(net) , unique(n.blocks), unique(n.iterations))))
   legend('bottomright', title='configuration', legend = levels(or$cfg)[unique(ss$cfg)],
          col=or.color[unique(ss$cfg)], pch=15)
@@ -462,7 +462,10 @@ size2 <- with(size, data.frame(size = n.nodes, # x-axis
                                mean.interval = mean.interval.mean, # y-axis
                                mean.interval.low = mean.interval.mean - 1.96 * mean.interval.sd,
                                mean.interval.high = mean.interval.mean + 1.96 * mean.interval.sd,
-                               distribution = net,
+                               messages = messages.sent.mean,
+                               messages.low = messages.sent.mean - 1.96 * messages.sent.sd,
+                               messages.high = messages.sent.mean + 1.96 * messages.sent.sd,
+                               distribution = net, # group
                                protocol = cfg)
 )
 size.wide <- reshape(size2, direction="wide", idvar=c("size", "distribution"), timevar="protocol")
