@@ -254,7 +254,7 @@ let genesis : block =
   and quorum = [(Obj.magic 0, 0)] in
   { parent
   ; quorum
-  ; body= {time= 0.} (* This transition will not be executed *)
+  ; body= () (* This transition will not be executed *)
   ; signature= Obj.magic "signed by Satoshi" }
 
 (** Mutable state for the parallel PoW protocol. Implements a receive window for

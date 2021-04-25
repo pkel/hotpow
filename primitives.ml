@@ -43,7 +43,7 @@ type block =
 
 and block_sig = (block Link.t * quorum * payload) DSA.signature
 
-and payload = {time: float}
+and payload = unit
 
 let block ~quorum ~lnk ~body secret =
   { quorum
@@ -86,30 +86,18 @@ let message_to_string = function
   | Vote v -> vote_to_string v
 
 module App = struct
-  (** This dummy App keeps track of the block height and records the history of
-      quorums. *)
+  (** This dummy App does nothing. (We have to save memory when running many
+      nodes.) *)
 
-  type transition = payload
+  type transition = unit
+  type state = unit
 
-  type entry =
-    { height: int
-    ; quorum: quorum
-    ; parent: block Link.t
-    ; hash: block Link.t
-    ; payload: transition }
-
-  type state = entry list
-
-  let initial : state = []
+  let initial : state = ()
 
   let apply ~hash ~quorum ~parent : transition -> state -> state =
-   fun payload s ->
-    let height = match s with [] -> 0 | {height; _} :: _ -> height + 1 in
-    {height; quorum; parent; hash; payload} :: s
+   fun payload s -> ignore (payload, s, hash, quorum, parent)
 
-  (* TODO: tracking time in the app is redundant since the simulator build a
-     block tree itself. remove *)
-  let propose ~time : transition = {time}
+  let propose ~time : transition = ignore time
   let verify _ = true
 end
 
