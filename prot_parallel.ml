@@ -161,12 +161,12 @@ end
 
 (** Impure module for storing blocks indexed by hash and parent hash. *)
 module BlockStore : sig
-  type 'a t
   (** An ['a t] stores values of type ['a].*)
+  type 'a t
 
-  type 'a key = {parent: 'a -> block Link.t; this: 'a -> block Link.t}
   (** An ['a key] provides functions to read the ['a]'s block hash and parent
       hash. *)
+  type 'a key = {parent: 'a -> block Link.t; this: 'a -> block Link.t}
 
   val create : 'a key -> 'a t
   (** [create key] sets up an empty store. Elements will be indexed using the
@@ -302,20 +302,18 @@ end = struct
     and progress = VoteStore.progress vs block.hash
     and leadership =
       let id, sol = List.hd block.b.quorum in
-      - Weight.weigh (block.b.parent, id, sol)
-      (* smaller votes are better, thus negative sign *)
-    in
+      -Weight.weigh (block.b.parent, id, sol)
+      (* smaller votes are better, thus negative sign *) in
     (* Compare by
      * - longest chain rule, then
      * - most vote rule, then
      * - leadership.
      * We put leadership last to avoid retroactive leader replacement.
      * We use OCaml's polymorphic compare on this triple *)
-    height, progress, leadership
+    (height, progress, leadership)
 
   let update_head t candidate =
-    if preference t.votes candidate > preference t.votes t.head
-    then
+    if preference t.votes candidate > preference t.votes t.head then
       let parent' (a : attached) =
         match get t.attached a.b.parent with
         | Some a -> a

@@ -172,8 +172,10 @@ let cols : row column list =
   ; {title= "blocks.confirmed"; f= (fun x -> i x.r.blocks_confirmed)}
   ; {title= "votes.observed"; f= (fun x -> i x.r.votes_observed)}
   ; {title= "votes.confirmed"; f= (fun x -> i x.r.votes_confirmed)}
-  ; {title= "attacker.blocks.confirmed"; f= (fun x -> i x.r.attacker_blocks_confirmed)}
-  ; {title= "attacker.votes.confirmed"; f= (fun x -> i x.r.attacker_votes_confirmed)}
+  ; { title= "attacker.blocks.confirmed"
+    ; f= (fun x -> i x.r.attacker_blocks_confirmed) }
+  ; { title= "attacker.votes.confirmed"
+    ; f= (fun x -> i x.r.attacker_votes_confirmed) }
   ; {title= "mean.interval"; f= (fun x -> f x.r.mean_interval)} ]
 
 let block_cols : sim_block column list =
@@ -190,7 +192,9 @@ type net_event =
 
 type event = ATV of {node: int} | Net of net_event | Shutdown
 type eclipse = {till: float; queue: net_event Queue.t}
-type node = {m: (module Node); pubkey: DSA.public_key ; mutable eclipse: eclipse option}
+
+type node =
+  {m: (module Node); pubkey: DSA.public_key; mutable eclipse: eclipse option}
 
 let string_of_block (b : block) =
   let open Link in
@@ -274,7 +278,7 @@ let handle_event ~p ~s =
     | Broadcast {src; cnt; m} ->
         let lat =
           match m with Vote _ -> p.delta_vote | Block _ -> p.delta_block in
-        incr s.msg_cnt;
+        incr s.msg_cnt ;
         Array.iteri
           (fun rcv _ ->
             if rcv <> src then
@@ -317,12 +321,12 @@ let handle_event ~p ~s =
 let quorum_threshold = Weight.max_weight
 
 let broadcast ~msg_cnt (scheduler : event scheduler) src =
-    let module B = struct
-      let send m =
-        incr msg_cnt ;
-        scheduler#schedule (Net (Broadcast {cnt= !msg_cnt; m; src}))
-    end in
-    (module B : Broadcast)
+  let module B = struct
+    let send m =
+      incr msg_cnt ;
+      scheduler#schedule (Net (Broadcast {cnt= !msg_cnt; m; src}))
+  end in
+  (module B : Broadcast)
 
 let spawn ~p ~msg_cnt scheduler id secret strategy =
   let module Config = struct
@@ -373,30 +377,29 @@ let result ~p ~s : result =
   let attacker_id = s.nodes.(0).pubkey in
   let blocks_observed, blocks_confirmed, attacker_blocks_confirmed =
     (* count blocks *)
-    let o, c, a = ref 0, ref 0, ref 0 in
-    List.iter (fun b ->
+    let o, c, a = (ref 0, ref 0, ref 0) in
+    List.iter
+      (fun b ->
         incr o ;
-        if b.confirmed then begin
-          incr c;
-          if fst (List.hd b.data.quorum) = attacker_id then incr a
-        end
-      ) blocks ;
+        if b.confirmed then (
+          incr c ;
+          if fst (List.hd b.data.quorum) = attacker_id then incr a ))
+      blocks ;
     assert (!c = p.n_blocks) ;
-    !o, !c, !a
+    (!o, !c, !a)
   and votes_observed, votes_confirmed, attacker_votes_confirmed =
     (* count votes *)
-    let o, c, a = ref 0, ref 0, ref 0 in
-    List.iter (fun (v : sim_vote) ->
-        incr o;
-        if v.confirmed then begin
-          incr c;
+    let o, c, a = (ref 0, ref 0, ref 0) in
+    List.iter
+      (fun (v : sim_vote) ->
+        incr o ;
+        if v.confirmed then (
+          incr c ;
           let _, id, _ = v.data in
-          if id = attacker_id then incr a
-        end
-      ) votes ;
+          if id = attacker_id then incr a ))
+      votes ;
     assert (!c = p.n_blocks * p.quorum_size) ;
-    !o, !c, !a
-  in
+    (!o, !c, !a) in
   { activations= s.atv_cnt
   ; messages_sent= !(s.msg_cnt)
   ; blocks_confirmed
@@ -416,8 +419,9 @@ let init ~p =
     Array.init p.n_nodes (fun i ->
         let pubkey, secret = DSA.id_of_int i in
         let code = if i = 0 then p.strategy else p.protocol in
-        {m = spawn ~p ~msg_cnt scheduler pubkey secret code; pubkey; eclipse= None})
-  in
+        { m= spawn ~p ~msg_cnt scheduler pubkey secret code
+        ; pubkey
+        ; eclipse= None }) in
   let () =
     (* eclipse first set of nodes *)
     let n = int_of_float (floor (float_of_int p.n_nodes *. p.churn)) in

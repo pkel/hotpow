@@ -41,8 +41,7 @@ let check_params ~tag p =
 let schedule ~tag params =
   let () = check_params ~tag params in
   let id = Simulator.hash_params params in
-  iter (range 1 n_iterations)
-    (fun iteration ->
+  iter (range 1 n_iterations) (fun iteration ->
       let hash = Hashable.hash (id, iteration) in
       match Hashtbl.find tasks hash with
       | None ->
@@ -62,8 +61,8 @@ let base =
   ; protocol= Parallel
   ; quorum_size= 0 (* invalid *)
   ; confirmations= 0 (* invalid *)
-  ; pow_scale = -1. (* invalid *)
-  ; delta_dist = Uniform
+  ; pow_scale= -1. (* invalid *)
+  ; delta_dist= Uniform
   ; delta_vote= -1. (* invalid *)
   ; delta_block= -1. (* invalid *)
   ; leader_failure_rate= 0.
@@ -71,160 +70,122 @@ let base =
   ; eclipse_time= 3600. (* 1h *)
   ; (* Attacker *)
     alpha= rational 1 n_nodes
-  ; strategy= Parallel
-  }
+  ; strategy= Parallel }
 
 let proposed =
-  { base with confirmations= 1
-            ; quorum_size= 51
-            ; pow_scale= rational 600 51
-            ; delta_vote= synchrony /. 8.
-            ; delta_block= synchrony
-  }
+  { base with
+    confirmations= 1
+  ; quorum_size= 51
+  ; pow_scale= rational 600 51
+  ; delta_vote= synchrony /. 8.
+  ; delta_block= synchrony }
 
 let nc_slow =
-  { base with confirmations= 16
-            ; quorum_size= 1
-            ; pow_scale= rational 600 1
-            ; delta_vote= synchrony
-            ; delta_block= synchrony (* does not apply *)
-  }
+  { base with
+    confirmations= 16
+  ; quorum_size= 1
+  ; pow_scale= rational 600 1
+  ; delta_vote= synchrony
+  ; delta_block= synchrony (* does not apply *) }
 
 let nc_fast =
-  { base with confirmations= 32
-            ; quorum_size= 1
-            ; pow_scale= rational 600 51
-            ; delta_vote= synchrony /. 4.
-            ; delta_block= synchrony /. 4. (* does not apply *)
-  }
+  { base with
+    confirmations= 32
+  ; quorum_size= 1
+  ; pow_scale= rational 600 51
+  ; delta_vote= synchrony /. 4.
+  ; delta_block= synchrony /. 4. (* does not apply *) }
 
 let scenarios =
   (* protocol, confirmations, k, lambda, delta_vote, delta_block *)
-  [ "proposed", proposed
-  ; "nc-slow",  nc_slow
-  (* ; "nc-fast",  nc_fast *)
-  ]
+  [("proposed", proposed); ("nc-slow", nc_slow) (* ; "nc-fast", nc_fast *)]
 
 let simplify cfg =
   let open Simulator in
-  { cfg with delta_vote = synchrony
-           ; delta_block = synchrony
-  }
+  {cfg with delta_vote= synchrony; delta_block= synchrony}
 
 (* All scenarios, simple networks *)
 let () =
   iter scenarios (fun (s, cfg) ->
       let cfg = simplify cfg in
-      schedule ~tag:("simple-exponential-" ^ s)
-        {cfg with delta_dist=Exponential};
-      schedule ~tag:("simple-uniform-" ^ s)
-        {cfg with delta_dist=Uniform}
-    )
+      schedule
+        ~tag:("simple-exponential-" ^ s)
+        {cfg with delta_dist= Exponential} ;
+      schedule ~tag:("simple-uniform-" ^ s) {cfg with delta_dist= Uniform})
 
 (* All scenarios, realistic networks *)
 let () =
   iter scenarios (fun (s, cfg) ->
-      schedule ~tag:("realistic-exponential-" ^ s)
-        { cfg with delta_dist=Exponential};
-      schedule ~tag:("realistic-uniform-" ^ s)
-        { cfg with delta_dist=Uniform}
-    )
+      schedule
+        ~tag:("realistic-exponential-" ^ s)
+        {cfg with delta_dist= Exponential} ;
+      schedule ~tag:("realistic-uniform-" ^ s) {cfg with delta_dist= Uniform})
 
 (* All scenarios, simple networks, varying expected latency. *)
 let () =
   let deltas =
-    range 0 6 |> map (fun x -> rational (1 lsl x) 4) (* 1/4 ... 16 *)
-  in
+    range 0 6 |> map (fun x -> rational (1 lsl x) 4)
+    (* 1/4 ... 16 *) in
   iter deltas (fun d ->
       iter scenarios (fun (s, realistic) ->
           let simple = simplify realistic in
-          let cfg =
-            { simple with delta_vote= d
-                        ; delta_block= d
-            }
-          in
-          schedule ~tag:("latency-simple-exponential-" ^ s)
-            { cfg with delta_dist=Exponential};
-          (* not in current version of paper
-          schedule ~tag:("latency-simple-uniform-" ^ s)
-            { cfg with delta_dist=Uniform}
-           *)
-        ))
+          let cfg = {simple with delta_vote= d; delta_block= d} in
+          schedule
+            ~tag:("latency-simple-exponential-" ^ s)
+            {cfg with delta_dist= Exponential}
+          (* not in current version of paper schedule
+             ~tag:("latency-simple-uniform-" ^ s) { cfg with delta_dist=Uniform} *)))
 
 (* All scenarios, realistic networks, varying number of nodes *)
 let () =
-  let sizes =
-    range 1 13 |> map (fun x -> 1 lsl x)
-  in
+  let sizes = range 1 13 |> map (fun x -> 1 lsl x) in
   iter sizes (fun n_nodes ->
       iter scenarios (fun (s, cfg) ->
-          let cfg =
-            { cfg with n_nodes
-                     ; alpha = rational 1 n_nodes
-            }
-          in
-          schedule ~tag:("nodes-realistic-exponential-" ^ s)
-            { cfg with delta_dist=Exponential};
-          (* not in current version of paper
-          schedule ~tag:("nodes-realistic-uniform-" ^ s)
-            { cfg with delta_dist=Uniform}
-           *)
-        ))
+          let cfg = {cfg with n_nodes; alpha= rational 1 n_nodes} in
+          schedule
+            ~tag:("nodes-realistic-exponential-" ^ s)
+            {cfg with delta_dist= Exponential}
+          (* not in current version of paper schedule
+             ~tag:("nodes-realistic-uniform-" ^ s) { cfg with
+             delta_dist=Uniform} *)))
 
 (* All scenarios, realistic networks, varying churn ratios. *)
 let () =
-  let churns =
-    range 0 5 |> map (fun x -> rational x 10)
-  in
+  let churns = range 0 5 |> map (fun x -> rational x 10) in
   iter churns (fun churn ->
       iter scenarios (fun (s, cfg) ->
-          let cfg = { cfg with churn } in
-          schedule ~tag:("churn-realistic-exponential-" ^ s)
-            { cfg with delta_dist=Exponential};
-          (* not in current version of paper
-          schedule ~tag:("churn-realistic-uniform-" ^ s)
-            { cfg with delta_dist=Uniform}
-           *)
-        ))
+          let cfg = {cfg with churn} in
+          schedule
+            ~tag:("churn-realistic-exponential-" ^ s)
+            {cfg with delta_dist= Exponential}
+          (* not in current version of paper schedule
+             ~tag:("churn-realistic-uniform-" ^ s) { cfg with
+             delta_dist=Uniform} *)))
 
 (* All scenarios, realistic networks, varying leader failure rates. *)
 let () =
-  let failures =
-    range 0 5 |> map (fun x -> rational x 10)
-  in
+  let failures = range 0 5 |> map (fun x -> rational x 10) in
   iter failures (fun leader_failure_rate ->
       iter scenarios (fun (s, cfg) ->
-          let cfg = { cfg with leader_failure_rate } in
-          schedule ~tag:("failure-realistic-exponential-" ^ s)
-            { cfg with delta_dist=Exponential};
-          (* not in current version of paper
-          schedule ~tag:("failure-realistic-uniform-" ^ s)
-            { cfg with delta_dist=Uniform}
-           *)
-        ))
+          let cfg = {cfg with leader_failure_rate} in
+          schedule
+            ~tag:("failure-realistic-exponential-" ^ s)
+            {cfg with delta_dist= Exponential}
+          (* not in current version of paper schedule
+             ~tag:("failure-realistic-uniform-" ^ s) { cfg with
+             delta_dist=Uniform} *)))
 
 (* Censor attack, proposed scenario, realistic networks, varying alpha. *)
 let () =
-  let alphas =
-    range 0 10 |> map (fun x -> rational x 20)
-  in
+  let alphas = range 0 10 |> map (fun x -> rational x 20) in
   iter alphas (fun alpha ->
-      let cfg =
-        { proposed with alpha
-                      ; strategy= Parallel_censor
-        } in
+      let cfg = {proposed with alpha; strategy= Parallel_censor} in
       schedule ~tag:"censor-realistic-exponential-proposed"
-        { cfg with delta_dist=Exponential};
-      (* not in current version of paper
-      schedule ~tag:"censor-realistic-uniform-proposed"
-        { cfg with delta_dist=Uniform};
-      let cfg =
-        { cfg with delta_vote= 0.
-                 ; delta_block= 0.
-        } in
-      schedule ~tag:"censor-zero-proposed" cfg
-       *)
-    )
+        {cfg with delta_dist= Exponential}
+      (* not in current version of paper schedule
+         ~tag:"censor-realistic-uniform-proposed" { cfg with
+         delta_dist=Uniform}; let cfg = { cfg with delta_vote= 0. ; delta_block=
+         0. } in schedule ~tag:"censor-zero-proposed" cfg *))
 
 let run_cols : (string * task) Simulator.column list =
   let open Simulator.ToString in
@@ -254,8 +215,8 @@ let () =
       Out_channel.create
         (Printf.sprintf "output/blocks-%08x-%i.csv" t.id t.iteration) in
     Out_channel.fprintf block_file "%s\n" (csv_head block_cols) ;
-    iter r.blocks
-      (fun b -> Out_channel.fprintf block_file "%s\n" (csv_row block_cols b));
+    iter r.blocks (fun b ->
+        Out_channel.fprintf block_file "%s\n" (csv_row block_cols b)) ;
     Out_channel.close block_file in
   let queue = ref tasks in
   printf "%3.0f%%%!" 0. ;
