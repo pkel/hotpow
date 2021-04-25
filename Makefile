@@ -31,6 +31,9 @@ format:
 deps: hotpow.opam hotpow-devel.opam
 	opam install . --deps-only --working-dir
 
+switch:
+	opam switch create . 4.11.1+flambda --deps-only
+
 clean:
 	rm -r _build
 
