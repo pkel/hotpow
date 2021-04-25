@@ -17,6 +17,7 @@
    (base (< v0.15))
    (parany :build)
    (ppx_hash :build)
+   (memtrace :build)
    (ppx_deriving_cmdliner :build)))
 
 (package

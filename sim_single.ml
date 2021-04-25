@@ -14,6 +14,7 @@ end
 
 let term =
   let f cli io p =
+    Memtrace.trace_if_requested () ;
     let () =
       match check_params p with
       | Error m ->

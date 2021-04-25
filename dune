@@ -4,6 +4,6 @@
  (names sim_single sim_many)
  (package hotpow)
  (public_names powsim many)
- (libraries cmdliner parany stdio)
+ (libraries cmdliner parany stdio memtrace)
  (preprocess
   (pps ppx_deriving_cmdliner ppx_hash ppx_deriving.show)))
